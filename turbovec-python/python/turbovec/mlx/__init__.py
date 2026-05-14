@@ -60,6 +60,10 @@ class TurboQuantIndex:
 
         self._quantize_pack = _kernels.build_quantize_pack_kernel(dim, bit_width)
         self._score = _kernels.build_score_kernel(dim, bit_width)
+        self._qb = 16
+        self._score_batched = _kernels.build_score_batched_kernel(
+            dim, bit_width, qb=self._qb
+        )
         self._packed_codes: "mx.array | None" = None
         self._norms: "mx.array | None" = None
 
@@ -225,7 +229,24 @@ class TurboQuantIndex:
 
         effective_k = min(k, self._n)
         q_rot = queries @ self._rotation.T
-        scores = self._score(q_rot, self._packed_codes, self._centroids, self._norms)
+        # Use the query-batched kernel when nq is large enough that
+        # amortizing code loads across the QB-batch beats the per-call
+        # padding waste. The break-even is roughly nq >= qb.
+        if nq >= self._qb:
+            pad = (-nq) % self._qb
+            if pad:
+                q_rot = mx.concatenate(
+                    [q_rot, mx.zeros((pad, self._dim), dtype=q_rot.dtype)],
+                    axis=0,
+                )
+            scores_padded = self._score_batched(
+                q_rot, self._packed_codes, self._centroids, self._norms
+            )
+            scores = scores_padded[:nq] if pad else scores_padded
+        else:
+            scores = self._score(
+                q_rot, self._packed_codes, self._centroids, self._norms
+            )
 
         idx = mx.argsort(-scores, axis=1)[:, :effective_k]
         top_scores = mx.take_along_axis(scores, idx, axis=1)
