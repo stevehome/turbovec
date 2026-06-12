@@ -53,6 +53,16 @@ uv pip install "haystack-ai>=2.0"             # test_haystack.py
 uv pip install "agno>=2.0"                    # test_agno.py
 ```
 
+## Running the web app
+
+```bash
+cd turbovec-python
+uv pip install gradio sentence-transformers langchain-anthropic "langchain-core>=0.3"
+uv run python app/app.py
+```
+
+Opens at http://127.0.0.1:7860. Edit `app/data/corpus.txt` to change the corpus (one document per line). Requires `ANTHROPIC_API_KEY` in the environment.
+
 ## End-to-end testing with an LLM
 
 These approaches exercise the full RAG stack: embed documents → store in turbovec → retrieve → generate. Listed simplest-first.

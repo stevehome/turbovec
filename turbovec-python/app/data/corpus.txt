@@ -1,0 +1,40 @@
+Python was created by Guido van Rossum and first released in 1991.
+Python uses indentation to define code blocks instead of braces.
+Python is dynamically typed — variable types are checked at runtime, not compile time.
+Python's GIL (Global Interpreter Lock) prevents true multi-threading within a single process.
+The multiprocessing module bypasses the GIL by spawning separate processes.
+Python's memory is managed by a reference-counting garbage collector.
+List comprehensions in Python provide a concise way to build lists: [x*2 for x in range(10)].
+Python generators use the yield keyword to produce values lazily without storing them in memory.
+The Python Package Index (PyPI) hosts over 400,000 third-party packages.
+Virtual environments isolate Python project dependencies from the system Python installation.
+uv is a fast Python package and project manager written in Rust, a drop-in replacement for pip.
+Rust was created by Graydon Hoare and first released by Mozilla Research in 2010.
+Rust guarantees memory safety through an ownership system enforced at compile time.
+The Rust borrow checker ensures that references never outlive the data they point to.
+Rust has no garbage collector — memory is freed deterministically when values go out of scope.
+Cargo is Rust's built-in package manager, build system, and test runner.
+Rust's Option<T> type replaces null pointers: a value is either Some(x) or None.
+Rust's Result<T, E> type forces callers to explicitly handle errors rather than ignoring them.
+Rust traits are similar to interfaces — they define shared behaviour across types.
+Zero-cost abstractions in Rust mean high-level constructs compile to the same machine code as low-level equivalents.
+SIMD (Single Instruction Multiple Data) allows one CPU instruction to operate on multiple data values simultaneously.
+AVX-512 is an Intel SIMD extension that operates on 512-bit registers, processing 16 floats at once.
+NEON is ARM's SIMD instruction set, used in Apple Silicon and mobile processors.
+Vector quantization compresses high-dimensional vectors by mapping each coordinate to a small integer code.
+Product quantization splits a vector into sub-vectors and quantizes each independently.
+The Lloyd-Max algorithm finds optimal quantization boundaries that minimise mean squared error.
+A codebook is a lookup table of precomputed centroid values used during quantization and scoring.
+Approximate nearest neighbour (ANN) search trades recall for speed by avoiding an exhaustive scan.
+Recall@k measures the fraction of true top-k neighbours that appear in the returned top-k results.
+Cosine similarity measures the angle between two vectors — a score of 1.0 means identical directions.
+Inner product search is equivalent to cosine similarity when vectors are unit-normalised.
+RAG (Retrieval-Augmented Generation) improves LLM answers by retrieving relevant documents before generation.
+Embeddings are dense vector representations of text that capture semantic meaning.
+A vector index stores embeddings and supports fast similarity search over large corpora.
+Chunking splits long documents into smaller passages before embedding so each chunk fits the model's context window.
+Hybrid search combines dense vector search with sparse keyword search (BM25) for better retrieval.
+LangChain is a framework for building LLM applications with chains of components.
+LlamaIndex is a data framework for building RAG pipelines over custom data sources.
+Haystack is an open-source framework for building NLP pipelines including retrieval and generation.
+turbovec is a Rust vector index with Python bindings implementing the TurboQuant quantization algorithm.
