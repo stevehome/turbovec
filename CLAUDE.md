@@ -65,27 +65,14 @@ One API key (`ANTHROPIC_API_KEY`), no embedding cost. `all-MiniLM-L6-v2` produce
 uv pip install "langchain-core>=0.3" langchain-anthropic sentence-transformers
 ```
 
-```python
-from langchain_anthropic import ChatAnthropic
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from turbovec.langchain import TurboVecVectorStore
+The test file is at `tests/test_e2e_rag.py`. Run it with:
 
-docs = [
-    "Python was created by Guido van Rossum and first released in 1991.",
-    "Python uses indentation to define code blocks instead of braces.",
-    "Python is dynamically typed and supports multiple programming paradigms.",
-    "The Python Package Index (PyPI) hosts over 400,000 packages.",
-    "Python's GIL limits true multi-threading but multiprocessing works around it.",
-]
-
-embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-store = TurboVecVectorStore.from_texts(docs, embeddings)
-
-results = store.similarity_search("What year was Python released?", k=2)
-llm = ChatAnthropic(model="claude-haiku-4-5-20251001")
-answer = llm.invoke(f"Context: {results[0].page_content}\n\nQuestion: What year was Python released?")
-print(answer.content)
+```bash
+export ANTHROPIC_API_KEY=...
+uv run python -m pytest tests/test_e2e_rag.py -v
 ```
+
+Retrieval tests run without an API key; LLM tests are skipped when `ANTHROPIC_API_KEY` is not set.
 
 ### Option 2: LangChain + Claude + OpenAI embeddings
 
