@@ -53,6 +53,89 @@ uv pip install "haystack-ai>=2.0"             # test_haystack.py
 uv pip install "agno>=2.0"                    # test_agno.py
 ```
 
+## End-to-end testing with an LLM
+
+These approaches exercise the full RAG stack: embed documents → store in turbovec → retrieve → generate. Listed simplest-first.
+
+### Option 1 (recommended): LangChain + Claude + local embeddings
+
+One API key (`ANTHROPIC_API_KEY`), no embedding cost. `all-MiniLM-L6-v2` produces 384-dim vectors.
+
+```bash
+uv pip install "langchain-core>=0.3" langchain-anthropic sentence-transformers
+```
+
+```python
+from langchain_anthropic import ChatAnthropic
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from turbovec.langchain import TurboVecVectorStore
+
+docs = [
+    "Python was created by Guido van Rossum and first released in 1991.",
+    "Python uses indentation to define code blocks instead of braces.",
+    "Python is dynamically typed and supports multiple programming paradigms.",
+    "The Python Package Index (PyPI) hosts over 400,000 packages.",
+    "Python's GIL limits true multi-threading but multiprocessing works around it.",
+]
+
+embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+store = TurboVecVectorStore.from_texts(docs, embeddings)
+
+results = store.similarity_search("What year was Python released?", k=2)
+llm = ChatAnthropic(model="claude-haiku-4-5-20251001")
+answer = llm.invoke(f"Context: {results[0].page_content}\n\nQuestion: What year was Python released?")
+print(answer.content)
+```
+
+### Option 2: LangChain + Claude + OpenAI embeddings
+
+Closer to a production setup. Requires both `ANTHROPIC_API_KEY` and `OPENAI_API_KEY`.
+
+```bash
+uv pip install "langchain-core>=0.3" langchain-anthropic langchain-openai
+```
+
+Replace the embeddings line with:
+```python
+from langchain_openai import OpenAIEmbeddings
+embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+```
+
+### Option 3: Haystack pipeline + Claude
+
+Exercises the `TurboVecDocumentStore` via Haystack's explicit pipeline abstraction.
+
+```bash
+uv pip install "haystack-ai>=2.0" "anthropic>=0.20" sentence-transformers
+```
+
+```python
+from haystack import Pipeline, Document
+from haystack.components.embedders import SentenceTransformersDocumentEmbedder, SentenceTransformersTextEmbedder
+from haystack.components.retrievers import InMemoryEmbeddingRetriever
+from turbovec.haystack import TurboVecDocumentStore
+
+store = TurboVecDocumentStore()
+docs = [Document(content=t) for t in [
+    "Python was created by Guido van Rossum and first released in 1991.",
+    "Python uses indentation to define code blocks instead of braces.",
+]]
+
+embedder = SentenceTransformersDocumentEmbedder(model="all-MiniLM-L6-v2")
+embedder.warm_up()
+store.write_documents(embedder.run(docs)["documents"])
+
+query_embedder = SentenceTransformersTextEmbedder(model="all-MiniLM-L6-v2")
+retriever = InMemoryEmbeddingRetriever(document_store=store)
+
+p = Pipeline()
+p.add_component("embedder", query_embedder)
+p.add_component("retriever", retriever)
+p.connect("embedder.embedding", "retriever.query_embedding")
+result = p.run({"embedder": {"text": "When was Python created?"}})
+print(result["retriever"]["documents"][0].content)
+```
+
 ## Workspace layout
 
 ```
