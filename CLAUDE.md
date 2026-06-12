@@ -29,20 +29,28 @@ On Linux, `libopenblas-dev` must be installed (`sudo apt-get install -y libopenb
 ### Python
 
 ```bash
-# Build wheel
-cd turbovec-python && maturin build --release --out dist
+# If conda is active, unset CONDA_PREFIX first (maturin conflicts with it)
+unset CONDA_PREFIX
 
-# Dev install (rebuild in-place)
-cd turbovec-python && maturin develop --release
+cd turbovec-python
 
-# Run tests (after dev install)
-pytest turbovec-python/tests/ -v
+# Install test dependencies into the uv venv
+uv pip install numpy pytest
+
+# Dev install (builds the Rust extension in-place)
+uv run maturin develop --release
+
+# Run all tests
+uv run python -m pytest tests/ -v
 
 # Single test file
-pytest turbovec-python/tests/test_index.py -v
+uv run python -m pytest tests/test_index.py -v
 
-# Install with integration extras (required to run integration tests)
-pip install -e ".[langchain,llama-index,haystack,agno]"
+# Install integration extras (required for framework integration tests)
+uv pip install "langchain-core>=0.3"          # test_langchain.py
+uv pip install "llama-index-core>=0.11"       # test_llama_index.py
+uv pip install "haystack-ai>=2.0"             # test_haystack.py
+uv pip install "agno>=2.0"                    # test_agno.py
 ```
 
 ## Workspace layout
