@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>turbovec RAG</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+  <style>
+    body { padding: 1.5rem 0; }
+    .layout { display: grid; grid-template-columns: 1fr 2fr; gap: 2rem; align-items: start; }
+    .panel { border: 1px solid var(--pico-muted-border-color); border-radius: var(--pico-border-radius); padding: 1.25rem; }
+    .doc-list { max-height: 280px; overflow-y: auto; font-size: 0.82rem; padding-left: 1rem; margin: 0.5rem 0 0; }
+    .answer-box { min-height: 100px; padding: 0.75rem 1rem; border: 1px solid var(--pico-muted-border-color); border-radius: var(--pico-border-radius); white-space: pre-wrap; background: var(--pico-card-background-color); }
+    .sources-box { font-size: 0.82rem; color: var(--pico-muted-color); margin-top: 0.5rem; }
+    .sources-box p { margin: 0.25rem 0; }
+    .save-ok { color: var(--pico-ins-color); font-size: 0.85rem; }
+    details { margin-bottom: 0.75rem; }
+    details summary { cursor: pointer; font-weight: 500; }
+    .htmx-indicator { opacity: 0; }
+    .htmx-request .htmx-indicator { opacity: 1; }
+    #ask-btn[aria-busy="true"] { pointer-events: none; }
+  </style>
+</head>
+<body>
+<main class="container">
+  <hgroup>
+    <h1>turbovec RAG</h1>
+    <p>Local vector search + Claude — fully private, no data leaves your machine.</p>
+  </hgroup>
+
+  <div class="layout">
+
+    <!-- Left: corpus management -->
+    <aside class="panel">
+      <h2>Corpus</h2>
+
+      <div id="doc-list" hx-get="/documents" hx-trigger="load">
+        <small>Loading…</small>
+      </div>
+
+      <hr>
+
+      <details>
+        <summary>Add text</summary>
+        <form hx-post="/documents"
+              hx-target="#doc-list"
+              hx-swap="outerHTML"
+              hx-on::after-request="this.reset()">
+          <textarea name="text"
+                    placeholder="One document per line…"
+                    rows="4"
+                    style="margin-bottom:0.5rem"></textarea>
+          <button type="submit">Add to index</button>
+        </form>
+      </details>
+
+      <details>
+        <summary>Upload .txt file</summary>
+        <form hx-post="/upload"
+              hx-target="#doc-list"
+              hx-swap="outerHTML"
+              hx-encoding="multipart/form-data">
+          <input type="file" name="file" accept=".txt" style="margin-bottom:0.5rem">
+          <button type="submit">Upload</button>
+        </form>
+      </details>
+
+      <form hx-post="/save" hx-target="#save-status" hx-swap="innerHTML">
+        <button type="submit" class="secondary outline">Save index to disk</button>
+      </form>
+      <div id="save-status" style="margin-top:0.4rem;min-height:1.2rem"></div>
+    </aside>
+
+    <!-- Right: query + streaming answer -->
+    <section class="panel">
+      <h2>Query</h2>
+
+      <div role="group" style="margin-bottom:1rem">
+        <input type="text"
+               id="question"
+               placeholder="e.g. How does Rust guarantee memory safety?"
+               autofocus>
+        <button id="ask-btn" onclick="ask()">Ask</button>
+      </div>
+
+      <h3>Answer</h3>
+      <div class="answer-box" id="answer"><em style="color:var(--pico-muted-color)">Answer will appear here…</em></div>
+
+      <h3>Sources</h3>
+      <div class="sources-box" id="sources"><em style="color:var(--pico-muted-color)">Retrieved passages will appear here…</em></div>
+    </section>
+
+  </div>
+</main>
+
+<script>
+async function ask() {
+  const question = document.getElementById('question').value.trim();
+  if (!question) return;
+
+  const answerEl  = document.getElementById('answer');
+  const sourcesEl = document.getElementById('sources');
+  const btn       = document.getElementById('ask-btn');
+
+  answerEl.textContent  = '';
+  sourcesEl.innerHTML   = '';
+  btn.setAttribute('aria-busy', 'true');
+  btn.textContent = 'Thinking…';
+
+  try {
+    const response = await fetch('/query', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({question}),
+    });
+
+    if (!response.ok) {
+      answerEl.textContent = 'Request failed.';
+      return;
+    }
+
+    const reader  = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer    = '';
+
+    while (true) {
+      const {done, value} = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, {stream: true});
+
+      // Process every complete newline-delimited JSON message.
+      const lines = buffer.split('\n');
+      buffer = lines.pop(); // keep any incomplete trailing fragment
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let msg;
+        try { msg = JSON.parse(line); } catch { continue; }
+
+        if (msg.type === 'sources') {
+          sourcesEl.innerHTML = msg.data
+            .map(s => `<p>• ${s}</p>`)
+            .join('');
+        } else if (msg.type === 'token') {
+          answerEl.textContent += msg.data;
+        }
+      }
+    }
+  } finally {
+    btn.removeAttribute('aria-busy');
+    btn.textContent = 'Ask';
+  }
+}
+
+document.getElementById('question').addEventListener('keydown', e => {
+  if (e.key === 'Enter') ask();
+});
+</script>
+</body>
+</html>
