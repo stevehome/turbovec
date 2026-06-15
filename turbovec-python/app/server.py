@@ -102,8 +102,9 @@ async def query(request: Request):
     question = body.get("question", "").strip()
     if not question:
         return HTMLResponse("", status_code=400)
+    k = max(1, min(10, int(body.get("k", K))))
 
-    docs = _store.similarity_search_with_score(question, k=K)
+    docs = _store.similarity_search_with_score(question, k=k)
     sources = [
         {
             "text": d.page_content,
