@@ -41,6 +41,7 @@ classifiers = [
 ]
 
 dependencies = [
+    "langchain-text-splitters>=0.3.11",
     "numpy>=1.20",
 ]
 

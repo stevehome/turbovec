@@ -21,6 +21,7 @@ from fastapi.templating import Jinja2Templates
 from langchain_anthropic import ChatAnthropic
 from langchain_core.embeddings import Embeddings
 from langchain_core.messages import HumanMessage
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from sentence_transformers import SentenceTransformer
 
 from turbovec.langchain import TurboQuantVectorStore
@@ -42,6 +43,8 @@ class _Embeddings(Embeddings):
         return self._model.encode(text, normalize_embeddings=True).tolist()
 
 
+_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
+
 print("Loading embedding model...")
 _embeddings = _Embeddings()
 
@@ -51,9 +54,9 @@ if INDEX_PATH.exists():
     print(f"{len(_store._docs)} documents loaded.")
 else:
     print(f"Indexing corpus from {CORPUS_PATH}...")
-    lines = [ln.strip() for ln in CORPUS_PATH.read_text().splitlines() if ln.strip()]
-    _store = TurboQuantVectorStore.from_texts(lines, _embeddings)
-    print(f"{len(lines)} documents indexed.")
+    chunks = _splitter.split_text(CORPUS_PATH.read_text())
+    _store = TurboQuantVectorStore.from_texts(chunks, _embeddings)
+    print(f"{len(chunks)} chunks indexed.")
 
 _llm = ChatAnthropic(model="claude-haiku-4-5-20251001", max_tokens=1024)
 
@@ -112,18 +115,18 @@ async def list_documents():
 
 @app.post("/documents", response_class=HTMLResponse)
 async def add_documents(text: str = Form(...)):
-    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-    if lines:
-        _store.add_texts(lines)
+    chunks = _splitter.split_text(text)
+    if chunks:
+        _store.add_texts(chunks)
     return HTMLResponse(_doc_list_html())
 
 
 @app.post("/upload", response_class=HTMLResponse)
 async def upload_file(file: UploadFile):
     content = (await file.read()).decode(errors="replace")
-    lines = [ln.strip() for ln in content.splitlines() if ln.strip()]
-    if lines:
-        _store.add_texts(lines)
+    chunks = _splitter.split_text(content)
+    if chunks:
+        _store.add_texts(chunks)
     return HTMLResponse(_doc_list_html())
 
 
