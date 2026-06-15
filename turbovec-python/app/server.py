@@ -103,14 +103,15 @@ async def query(request: Request):
     if not question:
         return HTMLResponse("", status_code=400)
 
-    docs = _store.similarity_search(question, k=K)
+    docs = _store.similarity_search_with_score(question, k=K)
     sources = [
         {
             "text": d.page_content,
             "source": d.metadata.get("source", "unknown"),
             "chunk": d.metadata.get("chunk", 0),
+            "score": round(score, 3),
         }
-        for d in docs
+        for d, score in docs
     ]
     context = "\n".join(s["text"] for s in sources)
     prompt = (

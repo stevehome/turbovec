@@ -141,8 +141,9 @@ async function ask() {
         if (msg.type === 'sources') {
           sourcesEl.innerHTML = msg.data.map(s => {
             const label = `${s.source} #${s.chunk + 1}`;
+            const score = `<span style="color:var(--pico-muted-color);font-weight:normal"> · ${s.score}</span>`;
             const preview = s.text.length > 160 ? s.text.slice(0, 160) + '…' : s.text;
-            return `<p><strong>${label}</strong><br><span>${preview}</span></p>`;
+            return `<p><strong>${label}${score}</strong><br><span>${preview}</span></p>`;
           }).join('');
         } else if (msg.type === 'token') {
           answerEl.textContent += msg.data;
