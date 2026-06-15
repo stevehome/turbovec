@@ -48,14 +48,20 @@ _splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
 print("Loading embedding model...")
 _embeddings = _Embeddings()
 
+def _chunk_with_meta(text: str, source: str) -> tuple[list[str], list[dict]]:
+    chunks = _splitter.split_text(text)
+    metas = [{"source": source, "chunk": i} for i, _ in enumerate(chunks)]
+    return chunks, metas
+
+
 if INDEX_PATH.exists():
     print(f"Loading saved index from {INDEX_PATH}...")
     _store = TurboQuantVectorStore.load(INDEX_PATH, _embeddings)
     print(f"{len(_store._docs)} documents loaded.")
 else:
     print(f"Indexing corpus from {CORPUS_PATH}...")
-    chunks = _splitter.split_text(CORPUS_PATH.read_text())
-    _store = TurboQuantVectorStore.from_texts(chunks, _embeddings)
+    chunks, metas = _chunk_with_meta(CORPUS_PATH.read_text(), CORPUS_PATH.name)
+    _store = TurboQuantVectorStore.from_texts(chunks, _embeddings, metadatas=metas)
     print(f"{len(chunks)} chunks indexed.")
 
 _llm = ChatAnthropic(model="claude-haiku-4-5-20251001", max_tokens=1024)
@@ -67,11 +73,13 @@ templates = Jinja2Templates(directory=str(_HERE / "templates"))
 def _doc_list_html() -> str:
     docs = list(_store._docs.values())
     items = "".join(
-        f"<li>{html.escape(text)}</li>" for text, _ in docs
+        f'<li><em>{html.escape(meta.get("source", "?"))} #{meta.get("chunk", 0) + 1}</em> '
+        f'{html.escape(text[:80])}{"…" if len(text) > 80 else ""}</li>'
+        for text, meta in docs
     )
     return (
         f'<div id="doc-list">'
-        f'<small>{len(docs)} documents in index</small>'
+        f'<small>{len(docs)} chunks in index</small>'
         f'<ul class="doc-list">{items}</ul>'
         f'</div>'
     )
@@ -90,8 +98,15 @@ async def query(request: Request):
         return HTMLResponse("", status_code=400)
 
     docs = _store.similarity_search(question, k=K)
-    sources = [d.page_content for d in docs]
-    context = "\n".join(sources)
+    sources = [
+        {
+            "text": d.page_content,
+            "source": d.metadata.get("source", "unknown"),
+            "chunk": d.metadata.get("chunk", 0),
+        }
+        for d in docs
+    ]
+    context = "\n".join(s["text"] for s in sources)
     prompt = (
         f"Context:\n{context}\n\n"
         f"Question: {question}\n"
@@ -99,7 +114,6 @@ async def query(request: Request):
     )
 
     async def generate():
-        # Sources sent first so the UI can render them immediately.
         yield json.dumps({"type": "sources", "data": sources}) + "\n"
         async for chunk in _llm.astream([HumanMessage(content=prompt)]):
             if chunk.content:
@@ -115,18 +129,18 @@ async def list_documents():
 
 @app.post("/documents", response_class=HTMLResponse)
 async def add_documents(text: str = Form(...)):
-    chunks = _splitter.split_text(text)
+    chunks, metas = _chunk_with_meta(text, "manual")
     if chunks:
-        _store.add_texts(chunks)
+        _store.add_texts(chunks, metadatas=metas)
     return HTMLResponse(_doc_list_html())
 
 
 @app.post("/upload", response_class=HTMLResponse)
 async def upload_file(file: UploadFile):
     content = (await file.read()).decode(errors="replace")
-    chunks = _splitter.split_text(content)
+    chunks, metas = _chunk_with_meta(content, file.filename or "upload")
     if chunks:
-        _store.add_texts(chunks)
+        _store.add_texts(chunks, metadatas=metas)
     return HTMLResponse(_doc_list_html())
 
 

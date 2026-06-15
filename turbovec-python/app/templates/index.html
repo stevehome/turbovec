@@ -48,7 +48,7 @@
               hx-swap="outerHTML"
               hx-on::after-request="this.reset()">
           <textarea name="text"
-                    placeholder="One document per line…"
+                    placeholder="Paste any text — it will be chunked automatically…"
                     rows="4"
                     style="margin-bottom:0.5rem"></textarea>
           <button type="submit">Add to index</button>
@@ -139,9 +139,11 @@ async function ask() {
         try { msg = JSON.parse(line); } catch { continue; }
 
         if (msg.type === 'sources') {
-          sourcesEl.innerHTML = msg.data
-            .map(s => `<p>• ${s}</p>`)
-            .join('');
+          sourcesEl.innerHTML = msg.data.map(s => {
+            const label = `${s.source} #${s.chunk + 1}`;
+            const preview = s.text.length > 160 ? s.text.slice(0, 160) + '…' : s.text;
+            return `<p><strong>${label}</strong><br><span>${preview}</span></p>`;
+          }).join('');
         } else if (msg.type === 'token') {
           answerEl.textContent += msg.data;
         }
