@@ -162,6 +162,18 @@ async def upload_file(file: UploadFile):
     return HTMLResponse(_doc_list_html())
 
 
+@app.post("/reindex", response_class=HTMLResponse)
+async def reindex():
+    old_ids = [sid for sid, (_, meta) in _store._docs.items() if meta.get("source") == CORPUS_PATH.name]
+    if old_ids:
+        _store.delete(old_ids)
+    chunks, metas = _chunk_with_meta(CORPUS_PATH.read_text(), CORPUS_PATH.name)
+    if chunks:
+        _store.add_texts(chunks, metadatas=metas)
+    _store.dump(INDEX_PATH)
+    return HTMLResponse(_doc_list_html())
+
+
 @app.post("/save", response_class=HTMLResponse)
 async def save_index():
     _store.dump(INDEX_PATH)

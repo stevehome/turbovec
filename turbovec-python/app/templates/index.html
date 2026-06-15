@@ -66,6 +66,11 @@
         </form>
       </details>
 
+      <form hx-post="/reindex" hx-target="#doc-list" hx-swap="outerHTML"
+            hx-confirm="Re-index corpus.txt? Existing corpus chunks will be replaced."
+            style="margin-bottom:0.5rem">
+        <button type="submit" class="secondary outline">Re-index corpus.txt</button>
+      </form>
       <form hx-post="/save" hx-target="#save-status" hx-swap="innerHTML">
         <button type="submit" class="secondary outline">Save index to disk</button>
       </form>
