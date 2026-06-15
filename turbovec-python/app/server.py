@@ -132,6 +132,7 @@ async def add_documents(text: str = Form(...)):
     chunks, metas = _chunk_with_meta(text, "manual")
     if chunks:
         _store.add_texts(chunks, metadatas=metas)
+        _store.dump(INDEX_PATH)
     return HTMLResponse(_doc_list_html())
 
 
@@ -141,6 +142,7 @@ async def upload_file(file: UploadFile):
     chunks, metas = _chunk_with_meta(content, file.filename or "upload")
     if chunks:
         _store.add_texts(chunks, metadatas=metas)
+        _store.dump(INDEX_PATH)
     return HTMLResponse(_doc_list_html())
 
 
