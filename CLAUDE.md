@@ -55,22 +55,35 @@ uv pip install "agno>=2.0"                    # test_agno.py
 
 ## Running the web app
 
-### Phase 2 — FastAPI + HTMX (streaming, add/upload, persistence)
+### FastAPI + HTMX (main app)
 
 ```bash
 cd turbovec-python
-uv pip install fastapi uvicorn jinja2 python-multipart sentence-transformers langchain-anthropic "langchain-core>=0.3"
+uv pip install fastapi uvicorn jinja2 python-multipart sentence-transformers langchain-anthropic "langchain-core>=0.3" langchain-text-splitters
 uv run python app/server.py
 ```
 
-Opens at http://127.0.0.1:8000. Features: streaming answers, add text / upload `.txt` files, save index to disk. Requires `ANTHROPIC_API_KEY`.
+Opens at http://127.0.0.1:8000. Requires `ANTHROPIC_API_KEY`.
 
 With auto-reload:
 ```bash
 cd turbovec-python/app && uv run uvicorn server:app --reload
 ```
 
-### Phase 1 — Gradio (simple demo)
+**Features:**
+- Streaming answers via Claude (claude-haiku-4-5)
+- `RecursiveCharacterTextSplitter` chunking (500 chars, 50 overlap) on all ingestion paths
+- Chunk provenance: every chunk tagged `{"source": filename, "chunk": i}`
+- Relevance scores shown per source; low-confidence warning when top score < 0.4
+- Adjustable K (1–10 slider) for number of retrieved sources
+- Add text / upload `.txt` files — auto-saved to `app/data/saved_index/` on every change
+- Per-chunk delete (× button in doc list)
+- Re-index corpus.txt button — drops and replaces `corpus.txt` chunks without touching manual/uploaded chunks
+- Manual "Save index to disk" button
+
+**Corpus:** edit `app/data/corpus.txt` (one passage per line or free-form prose), then click "Re-index corpus.txt" in the UI.
+
+### Gradio (simple demo)
 
 ```bash
 cd turbovec-python
@@ -78,7 +91,7 @@ uv pip install gradio sentence-transformers langchain-anthropic "langchain-core>
 uv run python app/app.py
 ```
 
-Opens at http://127.0.0.1:7860. Edit `app/data/corpus.txt` to change the corpus (one document per line).
+Opens at http://127.0.0.1:7860.
 
 ## End-to-end testing with an LLM
 
