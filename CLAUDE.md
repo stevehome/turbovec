@@ -59,7 +59,7 @@ uv pip install "agno>=2.0"                    # test_agno.py
 
 ```bash
 cd turbovec-python
-uv pip install fastapi uvicorn jinja2 python-multipart sentence-transformers langchain-anthropic "langchain-core>=0.3" langchain-text-splitters
+uv pip install fastapi uvicorn jinja2 python-multipart sentence-transformers langchain-anthropic "langchain-core>=0.3" langchain-text-splitters pypdf
 uv run python app/server.py
 ```
 
@@ -76,7 +76,7 @@ cd turbovec-python/app && uv run uvicorn server:app --reload
 - Chunk provenance: every chunk tagged `{"source": filename, "chunk": i}`
 - Relevance scores shown per source; low-confidence warning when top score < 0.4
 - Adjustable K (1–10 slider) for number of retrieved sources
-- Add text / upload `.txt` files — auto-saved to `app/data/saved_index/` on every change
+- Add text / upload `.txt` or `.pdf` files — auto-saved to `app/data/saved_index/` on every change
 - Per-chunk delete (× button in doc list)
 - Re-index corpus.txt button — drops and replaces `corpus.txt` chunks without touching manual/uploaded chunks
 - Manual "Save index to disk" button
