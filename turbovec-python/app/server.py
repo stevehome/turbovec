@@ -14,6 +14,9 @@ import html
 import json
 from pathlib import Path
 
+import io
+
+import pypdf
 import uvicorn
 from fastapi import FastAPI, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, StreamingResponse
@@ -152,10 +155,19 @@ async def add_documents(text: str = Form(...)):
     return HTMLResponse(_doc_list_html())
 
 
+def _extract_text(filename: str, data: bytes) -> str:
+    if filename.lower().endswith(".pdf"):
+        reader = pypdf.PdfReader(io.BytesIO(data))
+        return "\n\n".join(page.extract_text() or "" for page in reader.pages)
+    return data.decode(errors="replace")
+
+
 @app.post("/upload", response_class=HTMLResponse)
 async def upload_file(file: UploadFile):
-    content = (await file.read()).decode(errors="replace")
-    chunks, metas = _chunk_with_meta(content, file.filename or "upload")
+    data = await file.read()
+    filename = file.filename or "upload"
+    content = _extract_text(filename, data)
+    chunks, metas = _chunk_with_meta(content, filename)
     if chunks:
         _store.add_texts(chunks, metadatas=metas)
         _store.dump(INDEX_PATH)
