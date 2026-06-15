@@ -71,11 +71,17 @@ templates = Jinja2Templates(directory=str(_HERE / "templates"))
 
 
 def _doc_list_html() -> str:
-    docs = list(_store._docs.values())
+    docs = list(_store._docs.items())
     items = "".join(
-        f'<li><em>{html.escape(meta.get("source", "?"))} #{meta.get("chunk", 0) + 1}</em> '
-        f'{html.escape(text[:80])}{"…" if len(text) > 80 else ""}</li>'
-        for text, meta in docs
+        f'<li style="display:flex;align-items:baseline;gap:0.5rem">'
+        f'<em>{html.escape(meta.get("source", "?"))} #{meta.get("chunk", 0) + 1}</em> '
+        f'<span style="flex:1">{html.escape(text[:80])}{"…" if len(text) > 80 else ""}</span>'
+        f'<button style="padding:0 0.4rem;font-size:0.75rem" class="secondary outline"'
+        f' hx-delete="/documents/{sid}"'
+        f' hx-target="#doc-list" hx-swap="outerHTML"'
+        f' hx-confirm="Delete this chunk?">×</button>'
+        f'</li>'
+        for sid, (text, meta) in docs
     )
     return (
         f'<div id="doc-list">'
@@ -124,6 +130,14 @@ async def query(request: Request):
 
 @app.get("/documents", response_class=HTMLResponse)
 async def list_documents():
+    return HTMLResponse(_doc_list_html())
+
+
+@app.delete("/documents/{doc_id}", response_class=HTMLResponse)
+async def delete_document(doc_id: str):
+    if doc_id in _store._docs:
+        _store.delete([doc_id])
+        _store.dump(INDEX_PATH)
     return HTMLResponse(_doc_list_html())
 
 
