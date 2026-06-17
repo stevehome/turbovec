@@ -11,10 +11,13 @@ Or with auto-reload:
 from __future__ import annotations
 
 import html
+import io
 import json
 from pathlib import Path
 
-import io
+from dotenv import load_dotenv
+
+load_dotenv()
 
 import pypdf
 import uvicorn
