@@ -81,6 +81,28 @@ Two distinct numbers, worth showing separately:
 - New endpoint `GET /stats` returning both numbers as JSON; doc-list `hx-get` already polls `/documents` on load, could add a sibling `hx-get="/stats"` div, or fold both into the existing `/documents` response
 - `uv add psutil` for the process RSS number
 
+## Future: adjustable chunk size
+
+**Goal:** let the user tune `chunk_size` and `chunk_overlap` instead of the hardcoded `(500, 50)` in `_splitter`, so they can experiment with different corpora.
+
+**Why it matters:**
+- Short factual docs (Q&A, glossaries) → smaller chunks (150–250 chars) give more precise retrieval
+- Long narrative docs (PDFs, articles) → larger chunks (800–1000 chars) give more context per result
+- Current 500-char default is reasonable but not universal
+
+**Constraint — ingestion-time only:** chunk size applies when text enters the index, not at query time. Changing it does not reprocess existing chunks. To see the effect the user must re-index — so the UI must make this clear. Two sensible models:
+- **Settings panel with "Re-index all"** — user sets chunk_size/overlap, hits a button that drops all chunks and re-ingests every source file. Requires tracking which files were ingested (not currently stored).
+- **Apply to new ingestion only** — update the splitter settings for future adds/uploads only; existing chunks are unaffected. Simpler, but the index becomes inconsistent (mixed chunk sizes).
+
+**Recommended model:** settings panel + "Re-index all." Requires storing source file paths or raw texts alongside the index so re-ingestion doesn't require re-uploading.
+
+**Approach**
+- Add two number inputs to the corpus panel: "Chunk size" (default 500) and "Overlap" (default 50)
+- Store settings in a small `settings.json` beside `saved_index/` so they persist across restarts
+- `POST /settings` updates `_splitter` in place and optionally triggers re-index
+- Re-index all: iterate `_store._docs`, group by source, re-chunk each source's concatenated text with the new splitter, replace chunks in the index, auto-save
+- Current chunk sizes per source could be shown in the doc list header for transparency
+
 ## Deployment: Vercel vs AWS
 
 ### Why Vercel is a poor fit
