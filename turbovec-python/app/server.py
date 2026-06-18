@@ -98,22 +98,46 @@ def _memory_stats() -> str:
 
 
 def _doc_list_html() -> str:
-    docs = list(_store._docs.items())
-    items = "".join(
-        f'<li style="display:flex;align-items:baseline;gap:0.5rem">'
-        f'<em>{html.escape(meta.get("source", "?"))} #{meta.get("chunk", 0) + 1}</em> '
-        f'<span style="flex:1">{html.escape(text[:80])}{"…" if len(text) > 80 else ""}</span>'
-        f'<button style="padding:0 0.4rem;font-size:0.75rem" class="secondary outline"'
-        f' hx-delete="/documents/{sid}"'
-        f' hx-target="#doc-list" hx-swap="outerHTML"'
-        f' hx-confirm="Delete this chunk?">×</button>'
-        f'</li>'
-        for sid, (text, meta) in docs
-    )
+    # Group chunks by source, preserving insertion order.
+    groups: dict[str, list[tuple[str, str, dict]]] = {}
+    for sid, (text, meta) in _store._docs.items():
+        source = meta.get("source", "?")
+        groups.setdefault(source, []).append((sid, text, meta))
+
+    sections = ""
+    for source, chunks in groups.items():
+        src_escaped = html.escape(source)
+        src_url = html.escape(source, quote=True)
+        rows = "".join(
+            f'<li style="display:flex;align-items:baseline;gap:0.5rem">'
+            f'<em>#{meta.get("chunk", 0) + 1}</em> '
+            f'<span style="flex:1">{html.escape(text[:80])}{"…" if len(text) > 80 else ""}</span>'
+            f'<button style="padding:0 0.3rem;font-size:0.72rem" class="secondary outline"'
+            f' hx-delete="/documents/{sid}"'
+            f' hx-target="#doc-list" hx-swap="outerHTML"'
+            f' hx-confirm="Delete this chunk?">×</button>'
+            f'</li>'
+            for sid, text, meta in chunks
+        )
+        sections += (
+            f'<details style="margin-bottom:0.5rem">'
+            f'<summary style="display:flex;align-items:center;gap:0.5rem;cursor:pointer">'
+            f'<strong>{src_escaped}</strong>'
+            f'<small style="color:var(--pico-muted-color)">{len(chunks)} chunk{"s" if len(chunks) != 1 else ""}</small>'
+            f'<button style="padding:0 0.4rem;font-size:0.72rem;margin-left:auto" class="secondary outline"'
+            f' hx-delete="/sources/{src_url}"'
+            f' hx-target="#doc-list" hx-swap="outerHTML"'
+            f' hx-confirm="Delete all chunks from {src_escaped}?">delete source</button>'
+            f'</summary>'
+            f'<ul class="doc-list">{rows}</ul>'
+            f'</details>'
+        )
+
+    total = len(_store._docs)
     return (
         f'<div id="doc-list">'
-        f'<small>{len(docs)} chunks in index</small>'
-        f'<ul class="doc-list">{items}</ul>'
+        f'<small>{total} chunk{"s" if total != 1 else ""} · {len(groups)} source{"s" if len(groups) != 1 else ""}</small>'
+        f'{sections}'
         f'<p style="font-size:0.75rem;color:var(--pico-muted-color);margin:0.4rem 0 0">'
         f'{_memory_stats()}</p>'
         f'</div>'
@@ -168,6 +192,15 @@ async def list_documents():
 async def delete_document(doc_id: str):
     if doc_id in _store._docs:
         _store.delete([doc_id])
+        _store.dump(INDEX_PATH)
+    return HTMLResponse(_doc_list_html())
+
+
+@app.delete("/sources/{source_name}", response_class=HTMLResponse)
+async def delete_source(source_name: str):
+    ids = [sid for sid, (_, meta) in _store._docs.items() if meta.get("source") == source_name]
+    if ids:
+        _store.delete(ids)
         _store.dump(INDEX_PATH)
     return HTMLResponse(_doc_list_html())
 
