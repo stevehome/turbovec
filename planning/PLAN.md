@@ -108,14 +108,40 @@ The packed code size is deterministic: `n_vectors × dim × bit_width / 8` bytes
 - **Settings panel with "Re-index all"** — user sets chunk_size/overlap, hits a button that drops all chunks and re-ingests every source file. Requires tracking which files were ingested (not currently stored).
 - **Apply to new ingestion only** — update the splitter settings for future adds/uploads only; existing chunks are unaffected. Simpler, but the index becomes inconsistent (mixed chunk sizes).
 
-**Recommended model:** settings panel + "Re-index all." Requires storing source file paths or raw texts alongside the index so re-ingestion doesn't require re-uploading.
+**Recommended model:** settings panel + "Re-index all." Requires storing the original full text per source so re-chunking is lossless.
+
+**The overlap reconstruction problem:** joining existing chunks to recover original text is lossy when `chunk_overlap > 0` (overlap regions appear twice). The clean fix is a `_sources: dict[str, str]` global that stores the full original text keyed by source name, populated at upload/add time. Re-chunking then reads from `_sources` rather than trying to reconstruct from existing chunks.
 
 **Approach**
-- Add two number inputs to the corpus panel: "Chunk size" (default 500) and "Overlap" (default 50)
-- Store settings in a small `settings.json` beside `saved_index/` so they persist across restarts
-- `POST /settings` updates `_splitter` in place and optionally triggers re-index
-- Re-index all: iterate `_store._docs`, group by source, re-chunk each source's concatenated text with the new splitter, replace chunks in the index, auto-save
-- Current chunk sizes per source could be shown in the doc list header for transparency
+1. Add `_sources: dict[str, str]` global — store full text per source on every upload/add; persist alongside `saved_index/` as `sources.json`
+2. Add two number inputs to the corpus panel: "Chunk size" (default 500) and "Overlap" (default 50)
+3. `POST /settings` — updates `_splitter`, re-chunks all sources from `_sources`, rebuilds index, auto-saves
+4. Store current settings in `settings.json` beside `saved_index/` so they survive restarts
+
+## Future: delete by source
+
+**Goal:** remove all chunks from a specific source (e.g. delete everything from `git-usermanual.txt`) without deleting chunks from other sources one by one.
+
+**Backend:** already supported — same pattern as the reindex endpoint:
+```python
+old_ids = [sid for sid, (_, meta) in _store._docs.items() if meta.get("source") == name]
+_store.delete(old_ids)
+```
+Just needs a `DELETE /sources/{name}` endpoint.
+
+**UI options (best to simplest):**
+
+- **Option A: Grouped doc list with per-source delete (recommended)** — restructure `_doc_list_html()` to group chunks by source name, render a collapsible `<details>` per source with a delete-source × button in the summary. Makes the list much easier to scan at scale (e.g. 200 chunks from 3 files). The per-chunk × buttons remain inside each group.
+- **Option B: Dropdown + delete button** — a `<select>` of unique source names + "Delete source" button. Simpler to implement, no restructuring.
+- **Option C: Clickable source label** — each `corpus.txt #1` label deletes that whole source on click. Discoverable but risks accidental deletion.
+
+**Recommended:** Option A — grouping by source is independently useful regardless of deletion, and the delete button comes along naturally. Pairs well with the `_sources` dict from the chunk-size feature (both need per-source tracking).
+
+**Steps**
+1. Add `DELETE /sources/{name}` endpoint
+2. Restructure `_doc_list_html()` to group by `meta["source"]`, render `<details>` per group
+3. Add delete-source button in each group's `<summary>`
+4. Auto-save after deletion
 
 ## Deployment: Vercel vs AWS
 
