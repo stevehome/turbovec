@@ -71,6 +71,21 @@
             style="margin-bottom:0.5rem">
         <button type="submit" class="secondary outline">Re-index corpus.txt</button>
       </form>
+
+      <details style="margin-bottom:0.5rem">
+        <summary style="cursor:pointer;font-weight:500">Chunk settings</summary>
+        <form hx-post="/rechunk" hx-target="#doc-list" hx-swap="outerHTML"
+              hx-confirm="Re-chunk all sources with new settings?"
+              style="margin-top:0.5rem">
+          <div role="group" style="margin-bottom:0.5rem">
+            <input type="number" name="chunk_size" value="500" min="50" max="2000"
+                   placeholder="Chunk size" style="width:50%">
+            <input type="number" name="chunk_overlap" value="50" min="0" max="500"
+                   placeholder="Overlap" style="width:50%">
+          </div>
+          <button type="submit" class="secondary outline">Apply &amp; Re-chunk all</button>
+        </form>
+      </details>
       <form hx-post="/save" hx-target="#save-status" hx-swap="innerHTML">
         <button type="submit" class="secondary outline">Save index to disk</button>
       </form>

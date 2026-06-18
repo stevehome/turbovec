@@ -37,7 +37,30 @@ from turbovec.langchain import TurboQuantVectorStore
 _HERE = Path(__file__).parent
 CORPUS_PATH = _HERE / "data" / "corpus.txt"
 INDEX_PATH = _HERE / "data" / "saved_index"
+SETTINGS_PATH = _HERE / "data" / "settings.json"
+SOURCES_PATH = _HERE / "data" / "sources.json"
 K = 3
+
+
+def _load_settings() -> tuple[int, int]:
+    if SETTINGS_PATH.exists():
+        s = json.loads(SETTINGS_PATH.read_text())
+        return int(s.get("chunk_size", 500)), int(s.get("chunk_overlap", 50))
+    return 500, 50
+
+
+def _save_settings(chunk_size: int, chunk_overlap: int) -> None:
+    SETTINGS_PATH.write_text(json.dumps({"chunk_size": chunk_size, "chunk_overlap": chunk_overlap}))
+
+
+def _load_sources() -> dict[str, str]:
+    if SOURCES_PATH.exists():
+        return json.loads(SOURCES_PATH.read_text())
+    return {}
+
+
+def _save_sources() -> None:
+    SOURCES_PATH.write_text(json.dumps(_sources))
 
 
 class _Embeddings(Embeddings):
@@ -51,10 +74,13 @@ class _Embeddings(Embeddings):
         return self._model.encode(text, normalize_embeddings=True).tolist()
 
 
-_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
+_chunk_size, _chunk_overlap = _load_settings()
+_splitter = RecursiveCharacterTextSplitter(chunk_size=_chunk_size, chunk_overlap=_chunk_overlap)
+_sources: dict[str, str] = _load_sources()
 
 print("Loading embedding model...")
 _embeddings = _Embeddings()
+
 
 def _chunk_with_meta(text: str, source: str) -> tuple[list[str], list[dict]]:
     chunks = _splitter.split_text(text)
@@ -66,10 +92,17 @@ if INDEX_PATH.exists():
     print(f"Loading saved index from {INDEX_PATH}...")
     _store = TurboQuantVectorStore.load(INDEX_PATH, _embeddings)
     print(f"{len(_store._docs)} documents loaded.")
+    # Seed corpus.txt into _sources when loading a pre-source-tracking index.
+    if CORPUS_PATH.name not in _sources and CORPUS_PATH.exists():
+        _sources[CORPUS_PATH.name] = CORPUS_PATH.read_text()
+        _save_sources()
 else:
     print(f"Indexing corpus from {CORPUS_PATH}...")
-    chunks, metas = _chunk_with_meta(CORPUS_PATH.read_text(), CORPUS_PATH.name)
+    corpus_text = CORPUS_PATH.read_text()
+    _sources[CORPUS_PATH.name] = corpus_text
+    chunks, metas = _chunk_with_meta(corpus_text, CORPUS_PATH.name)
     _store = TurboQuantVectorStore.from_texts(chunks, _embeddings, metadatas=metas)
+    _save_sources()
     print(f"{len(chunks)} chunks indexed.")
 
 _llm = ChatAnthropic(model="claude-haiku-4-5-20251001", max_tokens=1024)
@@ -139,7 +172,7 @@ def _doc_list_html() -> str:
         f'<small>{total} chunk{"s" if total != 1 else ""} · {len(groups)} source{"s" if len(groups) != 1 else ""}</small>'
         f'{sections}'
         f'<p style="font-size:0.75rem;color:var(--pico-muted-color);margin:0.4rem 0 0">'
-        f'{_memory_stats()}</p>'
+        f'{_memory_stats()} · chunk_size={_chunk_size} overlap={_chunk_overlap}</p>'
         f'</div>'
     )
 
@@ -201,6 +234,8 @@ async def delete_source(source_name: str):
     ids = [sid for sid, (_, meta) in _store._docs.items() if meta.get("source") == source_name]
     if ids:
         _store.delete(ids)
+        _sources.pop(source_name, None)
+        _save_sources()
         _store.dump(INDEX_PATH)
     return HTMLResponse(_doc_list_html())
 
@@ -210,6 +245,8 @@ async def add_documents(text: str = Form(...)):
     chunks, metas = _chunk_with_meta(text, "manual")
     if chunks:
         _store.add_texts(chunks, metadatas=metas)
+        _sources["manual"] = (_sources.get("manual", "") + "\n\n" + text).strip()
+        _save_sources()
         _store.dump(INDEX_PATH)
     return HTMLResponse(_doc_list_html())
 
@@ -229,6 +266,8 @@ async def upload_file(file: UploadFile):
     chunks, metas = _chunk_with_meta(content, filename)
     if chunks:
         _store.add_texts(chunks, metadatas=metas)
+        _sources[filename] = content
+        _save_sources()
         _store.dump(INDEX_PATH)
     return HTMLResponse(_doc_list_html())
 
@@ -238,9 +277,34 @@ async def reindex():
     old_ids = [sid for sid, (_, meta) in _store._docs.items() if meta.get("source") == CORPUS_PATH.name]
     if old_ids:
         _store.delete(old_ids)
-    chunks, metas = _chunk_with_meta(CORPUS_PATH.read_text(), CORPUS_PATH.name)
+    corpus_text = CORPUS_PATH.read_text()
+    _sources[CORPUS_PATH.name] = corpus_text
+    chunks, metas = _chunk_with_meta(corpus_text, CORPUS_PATH.name)
     if chunks:
         _store.add_texts(chunks, metadatas=metas)
+    _save_sources()
+    _store.dump(INDEX_PATH)
+    return HTMLResponse(_doc_list_html())
+
+
+@app.post("/rechunk", response_class=HTMLResponse)
+async def rechunk(chunk_size: int = Form(500), chunk_overlap: int = Form(50)):
+    global _splitter, _chunk_size, _chunk_overlap
+    chunk_size = max(50, min(2000, chunk_size))
+    chunk_overlap = max(0, min(chunk_size - 1, chunk_overlap))
+    _chunk_size, _chunk_overlap = chunk_size, chunk_overlap
+    _splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+    _save_settings(chunk_size, chunk_overlap)
+
+    # Re-chunk every source whose text we have stored.
+    for source, text in list(_sources.items()):
+        old_ids = [sid for sid, (_, meta) in _store._docs.items() if meta.get("source") == source]
+        if old_ids:
+            _store.delete(old_ids)
+        chunks, metas = _chunk_with_meta(text, source)
+        if chunks:
+            _store.add_texts(chunks, metadatas=metas)
+
     _store.dump(INDEX_PATH)
     return HTMLResponse(_doc_list_html())
 
