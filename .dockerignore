@@ -1,0 +1,11 @@
+.git/
+target/
+turbovec-python/.venv/
+turbovec-python/dist/
+turbovec-python/app/data/saved_index/
+turbovec-python/app/data/settings.json
+turbovec-python/app/data/sources.json
+docs/
+planning/
+benchmarks/
+examples/
