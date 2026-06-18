@@ -35,6 +35,7 @@ cd turbovec-python/app && uv run uvicorn server:app --reload
 | Re-index corpus | Drops `corpus.txt` chunks, re-reads file, re-indexes; auto-saved |
 | Persistence | Index auto-saved to `app/data/saved_index/` on every mutation |
 | PDF upload | `.pdf` accepted alongside `.txt`; text extracted via `pypdf.PdfReader` |
+| Adjustable chunk size | `POST /rechunk` with `chunk_size`/`chunk_overlap`; re-chunks all tracked sources; persisted to `settings.json`/`sources.json` |
 
 ## Benchmarks (done)
 
@@ -95,7 +96,9 @@ The packed code size is deterministic: `n_vectors × dim × bit_width / 8` bytes
 - HTMX `hx-get="/stats"` div that refreshes alongside the doc list after every mutation
 - `uv add psutil` for process RSS
 
-## Future: adjustable chunk size
+## ~~Future: adjustable chunk size~~ (shipped)
+
+> Shipped in commit `a47b818`. See features table above.
 
 **Goal:** let the user tune `chunk_size` and `chunk_overlap` instead of the hardcoded `(500, 50)` in `_splitter`, so they can experiment with different corpora.
 
