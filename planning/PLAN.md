@@ -71,15 +71,29 @@ Scripts: `benchmarks/suite/{compression,recall}_synthetic.py`. Results: `benchma
 
 **Goal:** surface how much memory the running app is actually using, so the compression benchmark numbers connect to something visible in the live demo.
 
-Two distinct numbers, worth showing separately:
+Three numbers, worth showing together:
 
-1. **Index footprint** — the quantized vector data only, which is what `bit_width` actually affects. Reuse the benchmark technique (`benchmarks/suite/compression_synthetic.py`): write the index to a temp path via `index.write()` and check file size. Exact, and ties directly to the compression table above. Cheap at demo scale (instant for tens of MB).
-2. **Process RSS** — total memory of the running server (embedding model + torch + index + FastAPI). Dominated by the `sentence-transformers` model (~100s of MB), so this number won't move much when `bit_width` changes — it mainly answers "is this app heavy to run locally." Use `psutil.Process().memory_info().rss` (one new dependency) rather than stdlib `resource.getrusage` (peak, not current; platform-inconsistent units).
+1. **Quantized index size** — the packed codes actually held in memory. Reuse the benchmark technique: write the index to a temp path via `_store._index.write()` and check file size. Exact, cheap at demo scale, and directly comparable to the compression benchmark table.
+2. **FP32 equivalent size** — what the same vectors would cost uncompressed: `n_vectors × dim × 4 bytes`. Both `n` and `dim` are available from `len(_store._docs)` and `_store._index.dim`. No I/O needed — pure arithmetic.
+3. **Process RSS** — total server memory (embedding model + torch + index + FastAPI). Dominated by `sentence-transformers` (~100s of MB); won't move much with `bit_width` changes but answers "is this heavy to run." Use `psutil.Process().memory_info().rss` rather than stdlib `resource.getrusage` (peak not current; platform-inconsistent units).
+
+Showing all three together makes the compression ratio live and tangible:
+
+```
+Vectors: 2.1 MB quantized · 73.6 MB uncompressed (35x) · Process: 412 MB
+```
+
+The compression ratio from the live index should match the benchmark table — a useful sanity check.
+
+**How to compute quantized size without disk I/O (alternative)**
+
+The packed code size is deterministic: `n_vectors × dim × bit_width / 8` bytes, plus a small fixed header. This avoids the write-to-temp-file step entirely and is instant. The file-size approach is more honest (captures actual overhead), but the formula is good enough for a UI label.
 
 **Approach**
-- Add a small stats line in the corpus panel: "Index: 2.1 MB · Process: 412 MB"
-- New endpoint `GET /stats` returning both numbers as JSON; doc-list `hx-get` already polls `/documents` on load, could add a sibling `hx-get="/stats"` div, or fold both into the existing `/documents` response
-- `uv add psutil` for the process RSS number
+- Add a stats line in the corpus panel below the chunk count
+- New `GET /stats` endpoint returning `{quantized_mb, fp32_mb, ratio, process_mb}` as JSON
+- HTMX `hx-get="/stats"` div that refreshes alongside the doc list after every mutation
+- `uv add psutil` for process RSS
 
 ## Future: adjustable chunk size
 
