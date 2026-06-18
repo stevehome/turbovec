@@ -116,7 +116,7 @@ def _memory_stats() -> str:
     dim = _store._index.dim
     bit_width = _store._index.bit_width
     if n == 0 or dim is None:
-        vec_line = "Vectors: empty"
+        vec_line = f"Vectors: empty ({bit_width}-bit)"
     else:
         q_bytes = n * dim * bit_width / 8
         fp32_bytes = n * dim * 4
@@ -125,7 +125,7 @@ def _memory_stats() -> str:
         def _fmt(b: float) -> str:
             return f"{b / (1024 * 1024):.1f} MB" if b >= 1024 * 1024 else f"{b / 1024:.1f} KB"
 
-        vec_line = f"Vectors: {_fmt(q_bytes)} quantized · {_fmt(fp32_bytes)} FP32 ({ratio:.0f}x)"
+        vec_line = f"Vectors: {bit_width}-bit · {_fmt(q_bytes)} · {_fmt(fp32_bytes)} FP32 ({ratio:.0f}x)"
     proc_mb = psutil.Process().memory_info().rss / (1024 * 1024)
     return f'{vec_line} · Process: {proc_mb:.0f} MB'
 
@@ -305,6 +305,17 @@ async def rechunk(chunk_size: int = Form(500), chunk_overlap: int = Form(50)):
         if chunks:
             _store.add_texts(chunks, metadatas=metas)
 
+    _store.dump(INDEX_PATH)
+    return HTMLResponse(_doc_list_html())
+
+
+@app.post("/rebuild", response_class=HTMLResponse)
+async def rebuild(bit_width: int = Form(4)):
+    global _store
+    bit_width = max(2, min(4, bit_width))
+    texts = [text for text, _meta in _store._docs.values()]
+    metas = [meta for _text, meta in _store._docs.values()]
+    _store = TurboQuantVectorStore.from_texts(texts, _embeddings, metadatas=metas, bit_width=bit_width)
     _store.dump(INDEX_PATH)
     return HTMLResponse(_doc_list_html())
 

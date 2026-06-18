@@ -86,6 +86,20 @@
           <button type="submit" class="secondary outline">Apply &amp; Re-chunk all</button>
         </form>
       </details>
+      <details style="margin-bottom:0.5rem">
+        <summary style="cursor:pointer;font-weight:500">Compression</summary>
+        <form hx-post="/rebuild" hx-target="#doc-list" hx-swap="outerHTML"
+              hx-confirm="Rebuild index at new bit-width? All vectors will be re-quantized."
+              style="margin-top:0.5rem">
+          <select name="bit_width" style="margin-bottom:0.5rem">
+            <option value="4">4-bit (~8x vs FP32, best recall)</option>
+            <option value="3">3-bit (~10x vs FP32, good recall)</option>
+            <option value="2">2-bit (~16x vs FP32, lower recall)</option>
+          </select>
+          <button type="submit" class="secondary outline">Rebuild index</button>
+        </form>
+      </details>
+
       <form hx-post="/save" hx-target="#save-status" hx-swap="innerHTML">
         <button type="submit" class="secondary outline">Save index to disk</button>
       </form>
