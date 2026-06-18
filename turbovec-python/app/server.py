@@ -15,6 +15,8 @@ import io
 import json
 from pathlib import Path
 
+import psutil
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -76,6 +78,25 @@ app = FastAPI(title="turbovec RAG")
 templates = Jinja2Templates(directory=str(_HERE / "templates"))
 
 
+def _memory_stats() -> str:
+    n = len(_store._docs)
+    dim = _store._index.dim
+    bit_width = _store._index.bit_width
+    if n == 0 or dim is None:
+        vec_line = "Vectors: empty"
+    else:
+        q_bytes = n * dim * bit_width / 8
+        fp32_bytes = n * dim * 4
+        ratio = fp32_bytes / q_bytes
+
+        def _fmt(b: float) -> str:
+            return f"{b / (1024 * 1024):.1f} MB" if b >= 1024 * 1024 else f"{b / 1024:.1f} KB"
+
+        vec_line = f"Vectors: {_fmt(q_bytes)} quantized · {_fmt(fp32_bytes)} FP32 ({ratio:.0f}x)"
+    proc_mb = psutil.Process().memory_info().rss / (1024 * 1024)
+    return f'{vec_line} · Process: {proc_mb:.0f} MB'
+
+
 def _doc_list_html() -> str:
     docs = list(_store._docs.items())
     items = "".join(
@@ -93,6 +114,8 @@ def _doc_list_html() -> str:
         f'<div id="doc-list">'
         f'<small>{len(docs)} chunks in index</small>'
         f'<ul class="doc-list">{items}</ul>'
+        f'<p style="font-size:0.75rem;color:var(--pico-muted-color);margin:0.4rem 0 0">'
+        f'{_memory_stats()}</p>'
         f'</div>'
     )
 

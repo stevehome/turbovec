@@ -43,6 +43,7 @@ classifiers = [
 dependencies = [
     "langchain-text-splitters>=0.3.11",
     "numpy>=1.20",
+    "psutil>=7.2.2",
     "pypdf>=6.13.2",
     "python-dotenv>=1.2.1",
 ]
