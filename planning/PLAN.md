@@ -81,6 +81,78 @@ Two distinct numbers, worth showing separately:
 - New endpoint `GET /stats` returning both numbers as JSON; doc-list `hx-get` already polls `/documents` on load, could add a sibling `hx-get="/stats"` div, or fold both into the existing `/documents` response
 - `uv add psutil` for the process RSS number
 
+## Deployment: Vercel vs AWS
+
+### Why Vercel is a poor fit
+
+Vercel runs serverless functions (Lambda under the hood). This app has three properties that clash badly with that model:
+
+1. **Compiled Rust extension** — `turbovec` is a PyO3 `.so` built by maturin. Vercel's Python runtime doesn't support arbitrary native extensions; you'd need a custom build step and the resulting binary must match Vercel's Linux/amd64 environment. Non-trivial.
+2. **Large model at startup** — `all-MiniLM-L6-v2` is ~90 MB of model weights downloaded/loaded at startup. In a serverless function this happens on every cold start (seconds of latency). There's no warm process to amortize it across requests.
+3. **Persistent disk** — the index is saved to `app/data/saved_index/` (local filesystem). Serverless functions have no persistent disk between invocations; the index would be lost between cold starts without external storage.
+
+**Verdict: skip Vercel.** The compiled extension alone rules it out without significant rework.
+
+### AWS options (best to simplest fit)
+
+#### Option 1: AWS App Runner (recommended for demo)
+
+Managed container service. Runs a persistent Docker container, auto-scales, no infra to manage.
+
+- Closest to "just works" — same process model as local dev
+- Container stays warm between requests; model loads once
+- No cold-start penalty for the embedding model
+- Scale-to-zero is optional (min 1 instance = ~$5–15/month for a small container)
+
+#### Option 2: AWS ECS Fargate
+
+More control than App Runner. Better if you need fine-grained networking, IAM, or want to run alongside other ECS services.
+
+#### Option 3: AWS EC2
+
+Simplest conceptually — SSH in, clone repo, run the server. No autoscaling, no infra abstraction. Fine for a private demo that doesn't need to stay up.
+
+### What would need to change for any container deployment
+
+**1. Dockerfile (new file — biggest lift)**
+```dockerfile
+FROM python:3.11-slim
+RUN apt-get install -y curl build-essential
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+RUN pip install maturin uv
+WORKDIR /app
+COPY . .
+RUN cd turbovec-python && maturin build --release && uv pip install dist/*.whl
+# Pre-download the embedding model so cold starts don't hit HuggingFace
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
+CMD ["uv", "run", "python", "turbovec-python/app/server.py"]
+```
+
+**2. Index persistence → S3 (or accept ephemeral index)**
+
+`_store.dump(INDEX_PATH)` writes to local disk. Two options:
+- **Ephemeral**: bake a starter `saved_index/` into the Docker image at build time. Index resets on container restart, but for a demo that's acceptable.
+- **Persistent**: replace `dump`/`load` calls with S3 reads/writes via `boto3`. `IdMapIndex.write()` returns bytes; upload to S3. On startup, download from S3 if the bucket key exists. Adds `boto3` dependency and an S3 bucket.
+
+**3. ANTHROPIC_API_KEY**
+
+Replace `.env` file with an environment variable set in the App Runner / ECS task definition. The existing `load_dotenv()` call gracefully no-ops when no `.env` is present and the env var is already set — no code change needed.
+
+**4. Host binding**
+
+`server.py` binds to `127.0.0.1:8000`. Change to `0.0.0.0:8000` so the container's port is reachable from outside:
+```python
+uvicorn.run(app, host="0.0.0.0", port=8000)
+```
+
+**5. Horizontal scaling (if needed)**
+
+The app holds `_store` as a module-level global — single-process only. Multiple container replicas would each have independent indexes that diverge as users add/delete chunks. For a demo with one user this doesn't matter; for multi-user you'd need a shared index backend (e.g. S3-backed load on every write, or a dedicated index service).
+
+### Recommended path
+
+Start with **EC2** (fastest to validate), then move to **App Runner** once the Dockerfile is working. The S3 persistence swap is optional — a baked-in starter index is fine for a demo.
+
 ## Future ideas
 
 - Clear index — wipe everything for a fresh start
