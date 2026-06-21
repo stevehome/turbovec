@@ -218,10 +218,13 @@ def _doc_list_html() -> str:
         )
 
     total = len(_store._docs)
+    summary = f'{total} chunk{"s" if total != 1 else ""} · {len(groups)} source{"s" if len(groups) != 1 else ""}'
     return (
         f'<div id="doc-list">'
-        f'<small>{total} chunk{"s" if total != 1 else ""} · {len(groups)} source{"s" if len(groups) != 1 else ""}</small>'
+        f'<details open>'
+        f'<summary style="font-size:0.85rem;cursor:pointer">{summary}</summary>'
         f'{sections}'
+        f'</details>'
         f'<p style="font-size:0.75rem;color:var(--pico-muted-color);margin:0.4rem 0 0">'
         f'{_memory_stats()} · chunk_size={_chunk_size} overlap={_chunk_overlap}'
         f'{" · contextual=on" if _contextual else ""}</p>'
