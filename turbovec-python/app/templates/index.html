@@ -47,6 +47,9 @@
       <hr>
 
       <details>
+        <summary>Manage corpus</summary>
+
+      <details>
         <summary>Add text</summary>
         <form hx-post="/documents"
               hx-target="#doc-list"
@@ -113,6 +116,8 @@
         <button type="submit" class="secondary outline">Save index to disk</button>
       </form>
       <div id="save-status" style="margin-top:0.4rem;min-height:1.2rem"></div>
+
+      </details><!-- /Manage corpus -->
     </aside>
 
     <!-- Right: query + streaming answer -->
