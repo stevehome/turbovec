@@ -83,6 +83,10 @@
             <input type="number" name="chunk_overlap" value="50" min="0" max="500"
                    placeholder="Overlap" style="width:50%">
           </div>
+          <label style="font-size:0.85rem;display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem">
+            <input type="checkbox" name="contextual" value="1" style="margin:0">
+            Contextual enrichment (uses Claude, slower)
+          </label>
           <button type="submit" class="secondary outline">Apply &amp; Re-chunk all</button>
         </form>
       </details>

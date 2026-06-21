@@ -10,6 +10,7 @@ Or with auto-reload:
 """
 from __future__ import annotations
 
+import asyncio
 import html
 import io
 import json
@@ -42,15 +43,15 @@ SOURCES_PATH = _HERE / "data" / "sources.json"
 K = 3
 
 
-def _load_settings() -> tuple[int, int]:
+def _load_settings() -> tuple[int, int, bool]:
     if SETTINGS_PATH.exists():
         s = json.loads(SETTINGS_PATH.read_text())
-        return int(s.get("chunk_size", 500)), int(s.get("chunk_overlap", 50))
-    return 500, 50
+        return int(s.get("chunk_size", 500)), int(s.get("chunk_overlap", 50)), bool(s.get("contextual", False))
+    return 500, 50, False
 
 
-def _save_settings(chunk_size: int, chunk_overlap: int) -> None:
-    SETTINGS_PATH.write_text(json.dumps({"chunk_size": chunk_size, "chunk_overlap": chunk_overlap}))
+def _save_settings(chunk_size: int, chunk_overlap: int, contextual: bool) -> None:
+    SETTINGS_PATH.write_text(json.dumps({"chunk_size": chunk_size, "chunk_overlap": chunk_overlap, "contextual": contextual}))
 
 
 def _load_sources() -> dict[str, str]:
@@ -74,7 +75,7 @@ class _Embeddings(Embeddings):
         return self._model.encode(text, normalize_embeddings=True).tolist()
 
 
-_chunk_size, _chunk_overlap = _load_settings()
+_chunk_size, _chunk_overlap, _contextual = _load_settings()
 _splitter = RecursiveCharacterTextSplitter(chunk_size=_chunk_size, chunk_overlap=_chunk_overlap)
 _sources: dict[str, str] = _load_sources()
 
@@ -86,6 +87,25 @@ def _chunk_with_meta(text: str, source: str) -> tuple[list[str], list[dict]]:
     chunks = _splitter.split_text(text)
     metas = [{"source": source, "chunk": i} for i, _ in enumerate(chunks)]
     return chunks, metas
+
+
+async def _enrich_chunks(chunks: list[str], source_text: str) -> list[str]:
+    """Prepend a one-sentence context to each chunk (Anthropic Contextual Retrieval).
+
+    Calls are parallelised — N chunks = N concurrent haiku requests.
+    """
+    async def _one(chunk: str) -> str:
+        prompt = (
+            f"<document>\n{source_text}\n</document>\n\n"
+            f"Here is the chunk we want to situate within the whole document:\n"
+            f"<chunk>\n{chunk}\n</chunk>\n\n"
+            "Give a short succinct context to situate this chunk within the overall document "
+            "for the purposes of improving search retrieval. Answer only with the succinct context and nothing else."
+        )
+        resp = await _llm.ainvoke([HumanMessage(content=prompt)])
+        return f"{resp.content.strip()}\n\n{chunk}"
+
+    return list(await asyncio.gather(*[_one(c) for c in chunks]))
 
 
 if INDEX_PATH.exists():
@@ -172,7 +192,8 @@ def _doc_list_html() -> str:
         f'<small>{total} chunk{"s" if total != 1 else ""} · {len(groups)} source{"s" if len(groups) != 1 else ""}</small>'
         f'{sections}'
         f'<p style="font-size:0.75rem;color:var(--pico-muted-color);margin:0.4rem 0 0">'
-        f'{_memory_stats()} · chunk_size={_chunk_size} overlap={_chunk_overlap}</p>'
+        f'{_memory_stats()} · chunk_size={_chunk_size} overlap={_chunk_overlap}'
+        f'{" · contextual=on" if _contextual else ""}</p>'
         f'</div>'
     )
 
@@ -244,6 +265,8 @@ async def delete_source(source_name: str):
 async def add_documents(text: str = Form(...)):
     chunks, metas = _chunk_with_meta(text, "manual")
     if chunks:
+        if _contextual:
+            chunks = await _enrich_chunks(chunks, text)
         _store.add_texts(chunks, metadatas=metas)
         _sources["manual"] = (_sources.get("manual", "") + "\n\n" + text).strip()
         _save_sources()
@@ -265,6 +288,8 @@ async def upload_file(file: UploadFile):
     content = _extract_text(filename, data)
     chunks, metas = _chunk_with_meta(content, filename)
     if chunks:
+        if _contextual:
+            chunks = await _enrich_chunks(chunks, content)
         _store.add_texts(chunks, metadatas=metas)
         _sources[filename] = content
         _save_sources()
@@ -281,6 +306,8 @@ async def reindex():
     _sources[CORPUS_PATH.name] = corpus_text
     chunks, metas = _chunk_with_meta(corpus_text, CORPUS_PATH.name)
     if chunks:
+        if _contextual:
+            chunks = await _enrich_chunks(chunks, corpus_text)
         _store.add_texts(chunks, metadatas=metas)
     _save_sources()
     _store.dump(INDEX_PATH)
@@ -288,13 +315,14 @@ async def reindex():
 
 
 @app.post("/rechunk", response_class=HTMLResponse)
-async def rechunk(chunk_size: int = Form(500), chunk_overlap: int = Form(50)):
-    global _splitter, _chunk_size, _chunk_overlap
+async def rechunk(chunk_size: int = Form(500), chunk_overlap: int = Form(50), contextual: str = Form("")):
+    global _splitter, _chunk_size, _chunk_overlap, _contextual
     chunk_size = max(50, min(2000, chunk_size))
     chunk_overlap = max(0, min(chunk_size - 1, chunk_overlap))
     _chunk_size, _chunk_overlap = chunk_size, chunk_overlap
+    _contextual = bool(contextual)
     _splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
-    _save_settings(chunk_size, chunk_overlap)
+    _save_settings(chunk_size, chunk_overlap, _contextual)
 
     # Re-chunk every source whose text we have stored.
     for source, text in list(_sources.items()):
@@ -303,6 +331,8 @@ async def rechunk(chunk_size: int = Form(500), chunk_overlap: int = Form(50)):
             _store.delete(old_ids)
         chunks, metas = _chunk_with_meta(text, source)
         if chunks:
+            if _contextual:
+                chunks = await _enrich_chunks(chunks, text)
             _store.add_texts(chunks, metadatas=metas)
 
     _store.dump(INDEX_PATH)
