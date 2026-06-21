@@ -20,6 +20,11 @@
     .htmx-indicator { opacity: 0; }
     .htmx-request .htmx-indicator { opacity: 1; }
     #ask-btn[aria-busy="true"] { pointer-events: none; }
+    #ctx-modal { max-width: 680px; width: 90vw; }
+    #ctx-modal article { max-height: 70vh; overflow-y: auto; white-space: pre-wrap; font-size: 0.85rem; }
+    .ctx-before, .ctx-after { color: var(--pico-muted-color); }
+    .ctx-chunk { background: var(--pico-mark-background-color); color: var(--pico-mark-color); }
+    .view-btn { font-size: 0.72rem; padding: 0 0.4rem; margin-left: 0.4rem; vertical-align: middle; }
   </style>
 </head>
 <body>
@@ -140,7 +145,42 @@
   </div>
 </main>
 
+<dialog id="ctx-modal">
+  <article>
+    <header style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.75rem">
+      <strong id="ctx-title" style="font-size:0.9rem"></strong>
+      <button class="secondary outline" style="padding:0 0.5rem;margin:0"
+              onclick="document.getElementById('ctx-modal').close()">×</button>
+    </header>
+    <div id="ctx-body"></div>
+  </article>
+</dialog>
+
 <script>
+async function showContext(source, chunkIndex) {
+  const modal = document.getElementById('ctx-modal');
+  const title = document.getElementById('ctx-title');
+  const body  = document.getElementById('ctx-body');
+  title.textContent = `${source} #${chunkIndex + 1}`;
+  body.textContent  = 'Loading…';
+  modal.showModal();
+  try {
+    const r = await fetch(`/sources/${encodeURIComponent(source)}/context?chunk_index=${chunkIndex}&window=500`);
+    if (!r.ok) { body.textContent = 'Context not available.'; return; }
+    const d = await r.json();
+    body.innerHTML =
+      (d.truncated_start ? '<span class="ctx-before">…</span>' : '') +
+      `<span class="ctx-before">${escHtml(d.before)}</span>` +
+      `<mark class="ctx-chunk">${escHtml(d.chunk)}</mark>` +
+      `<span class="ctx-after">${escHtml(d.after)}</span>` +
+      (d.truncated_end ? '<span class="ctx-after">…</span>' : '');
+  } catch { body.textContent = 'Failed to load context.'; }
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
 async function ask() {
   const question = document.getElementById('question').value.trim();
   if (!question) return;
@@ -193,7 +233,9 @@ async function ask() {
             const label = `${s.source} #${s.chunk + 1}`;
             const score = `<span style="color:var(--pico-muted-color);font-weight:normal"> · ${s.score}</span>`;
             const preview = s.text.length > 160 ? s.text.slice(0, 160) + '…' : s.text;
-            return `<p><strong>${label}${score}</strong><br><span>${preview}</span></p>`;
+            const viewBtn = `<button class="secondary outline view-btn"
+              onclick="showContext(${JSON.stringify(s.source)}, ${s.chunk})">view ↗</button>`;
+            return `<p><strong>${label}${score}${viewBtn}</strong><br><span>${preview}</span></p>`;
           }).join('');
         } else if (msg.type === 'token') {
           answerEl.textContent += msg.data;

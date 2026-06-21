@@ -26,8 +26,8 @@ load_dotenv()
 
 import pypdf
 import uvicorn
-from fastapi import FastAPI, Form, Request, UploadFile
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi import FastAPI, Form, Query, Request, UploadFile
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from langchain_anthropic import ChatAnthropic
 from langchain_core.embeddings import Embeddings
@@ -271,6 +271,38 @@ async def query(request: Request):
 @app.get("/documents", response_class=HTMLResponse)
 async def list_documents():
     return HTMLResponse(_doc_list_html())
+
+
+@app.get("/sources/{source_name}/context")
+async def source_context(source_name: str, chunk_index: int = Query(0), window: int = Query(500)):
+    full_text = _sources.get(source_name, "")
+    # Find the stored chunk text for this source + index.
+    chunk_text = next(
+        (text for _, (text, meta) in _store._docs.items()
+         if meta.get("source") == source_name and meta.get("chunk") == chunk_index),
+        None,
+    )
+    if chunk_text is None or not full_text:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    # When contextual enrichment is on, the stored text has a prepended context sentence.
+    # Try the full text first, then fall back to stripping the prefix.
+    needle = chunk_text
+    pos = full_text.find(needle[:120])
+    if pos == -1:
+        original = chunk_text.split("\n\n", 1)[-1]
+        pos = full_text.find(original[:120])
+        needle = original
+    if pos == -1:
+        return JSONResponse({"error": "chunk not found in source"}, status_code=404)
+    start = max(0, pos - window)
+    end = min(len(full_text), pos + len(needle) + window)
+    return JSONResponse({
+        "before": full_text[start:pos],
+        "chunk": needle,
+        "after": full_text[pos + len(needle):end],
+        "truncated_start": start > 0,
+        "truncated_end": end < len(full_text),
+    })
 
 
 @app.delete("/documents/{doc_id}", response_class=HTMLResponse)
