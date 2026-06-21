@@ -383,6 +383,140 @@ def _extract_text_with_claude(pdf_bytes: bytes) -> str:
     return msg.content[0].text
 ```
 
+## Future: source document viewer
+
+After a query the Sources panel shows chunk previews and scores — but if a user wants to see more of a retrieved passage, or verify the context around it, there's no way to do that without going back to the original file.
+
+### What to show
+
+The goal is to let the user click a source reference and see the full original text of that source, with the retrieved chunk highlighted. Three levels of detail:
+
+1. **Full source text in a modal** — on click, open a `<dialog>` element containing the full text from `_sources[source_name]`, with the matched chunk highlighted via `<mark>`. Simple, works for all source types, no extra storage.
+
+2. **Surrounding context only** — instead of the full document, show N characters before and after the chunk boundary. Gives the "read more" experience without overwhelming the modal with a 50-page PDF. Good default.
+
+3. **Page-level view for PDFs** — for uploaded PDFs, re-render the specific page as an image via `pymupdf` and show it alongside the extracted text. Best experience for scanned or visually complex documents, but adds `pymupdf` dependency and per-request rendering cost.
+
+### Recommended approach
+
+Level 2 + level 1 toggle: default to ±500 chars of surrounding context (fast, always available from `_sources`), with a "Show full document" link that expands to the full text. Highlight the chunk with `<mark>`.
+
+**Implementation sketch:**
+
+New `GET /sources/{source_name}/context?chunk_index=N&window=500` endpoint:
+```python
+@app.get("/sources/{source_name}/context")
+async def source_context(source_name: str, chunk_index: int = 0, window: int = 500):
+    full_text = _sources.get(source_name, "")
+    # Find the chunk text in the full source
+    chunk_text = next(
+        (text for _, (text, meta) in _store._docs.items()
+         if meta.get("source") == source_name and meta.get("chunk") == chunk_index),
+        None
+    )
+    if not chunk_text or not full_text:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    pos = full_text.find(chunk_text[:80])  # find by first 80 chars (avoids context-enrichment prefix mismatch)
+    start = max(0, pos - window)
+    end = min(len(full_text), pos + len(chunk_text) + window)
+    return JSONResponse({
+        "before": full_text[start:pos],
+        "chunk": chunk_text,
+        "after": full_text[pos + len(chunk_text):end],
+        "truncated_start": start > 0,
+        "truncated_end": end < len(full_text),
+    })
+```
+
+The Sources panel renders each result with a small "view in context ↗" link. On click, HTMX fetches the endpoint and populates a `<dialog>`:
+```html
+<dialog id="context-modal">
+  <article>
+    <header><strong id="ctx-source"></strong> <button onclick="this.closest('dialog').close()">×</button></header>
+    <p id="ctx-before" style="color:var(--pico-muted-color)"></p>
+    <mark id="ctx-chunk"></mark>
+    <p id="ctx-after" style="color:var(--pico-muted-color)"></p>
+  </article>
+</dialog>
+```
+
+**Wrinkle — contextual enrichment:** when `_contextual` is on, chunks in `_store._docs` have the Claude-prepended context sentence at the front. The `find()` lookup needs to strip that prefix before searching. One clean fix: store the original (pre-enrichment) chunk text separately in metadata as `{"source": …, "chunk": …, "original": …}` and look up by `meta["original"]` instead of `text`.
+
+**Why it matters:** without source viewing, users have to trust the chunk preview blind. Being able to read the surrounding passage builds confidence in the retrieval quality — especially useful when demoing the bit-width tradeoff (lower bit-width may retrieve adjacent but not exactly right chunks).
+
+---
+
+## Future: rate limit handling for contextual enrichment
+
+The current `_enrich_chunks` fires all N chunk enrichments concurrently via `asyncio.gather`. For a large upload (e.g. a 200-chunk PDF), that's 200 simultaneous haiku calls — well over the 500k input tokens/minute org rate limit, which we already hit during testing.
+
+### The problem in numbers
+
+A typical chunk is ~500 chars ≈ ~125 tokens. The contextual enrichment prompt includes the full source document as context. For a 10-page PDF (~5,000 chars ≈ 1,250 tokens) with 20 chunks:
+- Tokens per call: ~1,250 (document) + ~125 (chunk) + ~50 (prompt) ≈ ~1,425 input tokens
+- 20 concurrent calls: ~28,500 tokens fired simultaneously
+- For 200 chunks: ~285,000 tokens in one burst → rate limit guaranteed
+
+### Fix: semaphore-based concurrency cap
+
+The simplest fix — cap concurrent Claude calls with `asyncio.Semaphore`:
+
+```python
+_ENRICHMENT_CONCURRENCY = 5  # tune based on rate limit tier
+
+async def _enrich_chunks(chunks: list[str], source_text: str) -> list[str]:
+    sem = asyncio.Semaphore(_ENRICHMENT_CONCURRENCY)
+
+    async def _one(chunk: str) -> str:
+        async with sem:
+            prompt = (
+                f"<document>\n{source_text}\n</document>\n\n"
+                f"<chunk>\n{chunk}\n</chunk>\n\n"
+                "Give a short succinct context to situate this chunk within the overall document "
+                "for the purposes of improving search retrieval. Answer only with the succinct context and nothing else."
+            )
+            resp = await _llm.ainvoke([HumanMessage(content=prompt)])
+            return f"{resp.content.strip()}\n\n{chunk}"
+
+    return list(await asyncio.gather(*[_one(c) for c in chunks]))
+```
+
+5 concurrent calls is conservative and safe at all tiers. For tier-2+ accounts (500k TPM sustained), 10–20 is fine. Make it a constant at the top of server.py so it's easy to adjust.
+
+### Additional improvement: prompt caching on the source document
+
+The document context is the same for every chunk enrichment call from the same source. Anthropic's prompt caching (`cache_control: {type: ephemeral}`) caches the document prefix across calls with a 5-minute TTL — reduces input token cost by ~90% after the first call and also reduces latency.
+
+To use it with LangChain, pass the cache control via extra headers or switch the enrichment calls to the raw `anthropic` SDK (already imported as `_anthropic_sdk`) where `cache_control` is a first-class parameter:
+
+```python
+async def _enrich_one(chunk: str, source_text: str, client: _anthropic_sdk.AsyncAnthropic) -> str:
+    msg = await client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=200,
+        messages=[{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": f"<document>\n{source_text}\n</document>",
+                 "cache_control": {"type": "ephemeral"}},  # cached across chunk calls
+                {"type": "text", "text": f"<chunk>\n{chunk}\n</chunk>\n\nGive a short succinct context..."},
+            ]
+        }]
+    )
+    return f"{msg.content[0].text.strip()}\n\n{chunk}"
+```
+
+Combined with the semaphore: 5 concurrent calls, first call pays full token cost, subsequent calls hit the cache. For a 200-chunk document, that's ~199 cache hits — cost drops by ~10x and rate limit pressure drops by the same factor.
+
+### Recommended implementation
+
+1. Add `_ENRICHMENT_CONCURRENCY = 5` constant
+2. Wrap `_enrich_chunks` with `asyncio.Semaphore(_ENRICHMENT_CONCURRENCY)`
+3. Switch enrichment calls from `_llm.ainvoke` to raw `_anthropic_sdk.AsyncAnthropic` with `cache_control` on the document block
+4. Set `max_tokens=200` for enrichment (context sentences are short — no need for 1024)
+
+---
+
 ## Future ideas
 
 - Clear index — wipe everything for a fresh start
