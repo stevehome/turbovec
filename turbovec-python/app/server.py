@@ -43,6 +43,7 @@ INDEX_PATH = _HERE / "data" / "saved_index"
 SETTINGS_PATH = _HERE / "data" / "settings.json"
 SOURCES_PATH = _HERE / "data" / "sources.json"
 K = 3
+_ENRICHMENT_CONCURRENCY = 5  # max concurrent Claude calls during chunk enrichment
 
 
 def _load_settings() -> tuple[int, int, bool]:
@@ -91,21 +92,49 @@ def _chunk_with_meta(text: str, source: str) -> tuple[list[str], list[dict]]:
     return chunks, metas
 
 
+_MAX_SOURCE_CHARS = 50_000  # ~12k tokens — fits in cache block, avoids context overflow
+
+
 async def _enrich_chunks(chunks: list[str], source_text: str) -> list[str]:
     """Prepend a one-sentence context to each chunk (Anthropic Contextual Retrieval).
 
-    Calls are parallelised — N chunks = N concurrent haiku requests.
+    Uses a semaphore to cap concurrent calls and prompt caching on the source
+    document so only the first call per batch pays full token cost.
+    Large source documents are truncated to _MAX_SOURCE_CHARS.
     """
+    client = _anthropic_sdk.AsyncAnthropic()
+    sem = asyncio.Semaphore(_ENRICHMENT_CONCURRENCY)
+    doc_text = source_text[:_MAX_SOURCE_CHARS]
+    if len(source_text) > _MAX_SOURCE_CHARS:
+        doc_text += "\n\n[document truncated for context]"
+
     async def _one(chunk: str) -> str:
-        prompt = (
-            f"<document>\n{source_text}\n</document>\n\n"
-            f"Here is the chunk we want to situate within the whole document:\n"
-            f"<chunk>\n{chunk}\n</chunk>\n\n"
-            "Give a short succinct context to situate this chunk within the overall document "
-            "for the purposes of improving search retrieval. Answer only with the succinct context and nothing else."
-        )
-        resp = await _llm.ainvoke([HumanMessage(content=prompt)])
-        return f"{resp.content.strip()}\n\n{chunk}"
+        async with sem:
+            msg = await client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=200,
+                messages=[{
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": f"<document>\n{doc_text}\n</document>",
+                            "cache_control": {"type": "ephemeral"},
+                        },
+                        {
+                            "type": "text",
+                            "text": (
+                                f"Here is the chunk we want to situate within the whole document:\n"
+                                f"<chunk>\n{chunk}\n</chunk>\n\n"
+                                "Give a short succinct context to situate this chunk within the overall document "
+                                "for the purposes of improving search retrieval. Answer only with the succinct context and nothing else."
+                            ),
+                        },
+                    ],
+                }],
+                extra_headers={"anthropic-beta": "prompt-caching-2024-07-31"},
+            )
+            return f"{msg.content[0].text.strip()}\n\n{chunk}"
 
     return list(await asyncio.gather(*[_one(c) for c in chunks]))
 
