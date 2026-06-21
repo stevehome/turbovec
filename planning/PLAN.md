@@ -274,6 +274,115 @@ Removing "the", "a", "and" etc. before chunking is a BM25-era technique for spar
 
 **Contextual Retrieval** — highest ROI, uses Claude which is already wired in, and directly improves the quality of what turbovec is compressing. Add a toggle in the upload flow: "Enrich chunks with context (uses Claude, slower)" — off by default so the fast path stays fast.
 
+## Future: scanned PDF ingestion
+
+Current `pypdf.PdfReader` extracts the text layer only — it returns an empty string for image-based (scanned) PDFs. A scanned annual report or contract uploads silently with zero chunks. Three approaches, from simplest to most involved:
+
+### Approach A: Claude native PDF API (recommended)
+
+Borrowed from [Anthropic's platform PDF support](https://platform.claude.com/docs/en/build-with-claude/pdf-support). Instead of parsing with pypdf, send the PDF directly to Claude as a `document` block:
+
+```python
+import base64, anthropic
+
+client = anthropic.Anthropic()
+with open("scanned.pdf", "rb") as f:
+    pdf_b64 = base64.standard_b64encode(f.read()).decode()
+
+msg = client.messages.create(
+    model="claude-haiku-4-5-20251001",
+    max_tokens=4096,
+    messages=[{
+        "role": "user",
+        "content": [
+            {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": pdf_b64}},
+            {"type": "text", "text": "Extract all text from this document, preserving paragraph structure."}
+        ]
+    }]
+)
+text = msg.content[0].text
+```
+
+Claude converts each page to an image internally, runs its own OCR, and returns clean text — including tables, diagrams with captions, and mixed text/image pages. Works for both text-layer PDFs and fully scanned ones. We already depend on `langchain-anthropic`, so no new dependencies needed.
+
+**Limits:** 32 MB per request, 100 pages per request (200k context models like haiku). **Cost:** ~1,500–3,000 text tokens + ~1,000 image tokens per page. A 20-page scanned report ≈ ~50k tokens ≈ $0.025 at haiku pricing — cheap enough to do on upload.
+
+**Prompt caching opportunity:** For large PDFs that need multiple questions (e.g. extract text, then enrich), upload once to the Files API and reference by `file_id` to avoid re-sending the binary on each call.
+
+### Approach B: Anthropic skills repo approach (pdf2image + pytesseract)
+
+The [anthropics/skills](https://github.com/anthropics/skills) PDF skill uses traditional OCR:
+
+```python
+# uv add pdf2image pytesseract
+# also needs: brew install poppler tesseract
+from pdf2image import convert_from_path
+import pytesseract
+
+images = convert_from_path("scanned.pdf")
+text = "\n\n".join(pytesseract.image_to_string(img) for img in images)
+```
+
+**Pros:** free, local, no API cost, no data leaves the machine.  
+**Cons:** tesseract quality is noticeably worse than Claude on anything but clean typefaces; needs `poppler` and `tesseract` system dependencies (complicates the Dockerfile); poor on tables, handwriting, and rotated pages.
+
+Good fit if the corpus is high-volume and privacy is paramount. Not the right choice for a demo that already uses Claude.
+
+### Approach C: Page-image rendering + Claude vision
+
+Render pages individually with `pymupdf` (fitz) for fine-grained control, then send each page image to Claude:
+
+```python
+# uv add pymupdf
+import fitz  # pymupdf
+doc = fitz.open("scanned.pdf")
+for page in doc:
+    pix = page.get_pixmap(dpi=150)
+    png_bytes = pix.tobytes("png")
+    # send png_bytes as image/png to Claude messages API
+```
+
+Useful when you need control over rendering resolution, want to skip certain page ranges, or need to extract structured data (tables) from specific pages. More code than Approach A for the same outcome at demo scale.
+
+### Recommended implementation plan
+
+1. **Auto-detect** in `_extract_text`: after pypdf extraction, check if text is suspiciously sparse (`len(text.strip()) < 100 * num_pages`). If so, fall back to Approach A.
+2. **No new dependency** — `anthropic` is already available via `langchain-anthropic`.
+3. **Combine with contextual enrichment**: if `_contextual` is on, pass the raw extracted text into `_enrich_chunks` as usual — extraction and enrichment are independent steps.
+4. **Dockerfile**: no changes needed for Approach A (no system deps). Approach B would need `apt-get install -y tesseract-ocr poppler-utils`.
+
+```python
+def _extract_text(filename: str, data: bytes) -> str:
+    if filename.lower().endswith(".pdf"):
+        reader = pypdf.PdfReader(io.BytesIO(data))
+        text = "\n\n".join(page.extract_text() or "" for page in reader.pages)
+        # Fall back to Claude OCR if text layer is empty/sparse
+        if len(text.strip()) < 100 * len(reader.pages):
+            text = _extract_text_with_claude(data)
+        return text
+    return data.decode(errors="replace")
+
+
+def _extract_text_with_claude(pdf_bytes: bytes) -> str:
+    import anthropic, base64
+    client = anthropic.Anthropic()
+    msg = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=4096,
+        messages=[{
+            "role": "user",
+            "content": [
+                {"type": "document", "source": {
+                    "type": "base64", "media_type": "application/pdf",
+                    "data": base64.standard_b64encode(pdf_bytes).decode()
+                }},
+                {"type": "text", "text": "Extract all text from this document, preserving paragraph structure. Output only the extracted text."}
+            ]
+        }]
+    )
+    return msg.content[0].text
+```
+
 ## Future ideas
 
 - Clear index — wipe everything for a fresh start
