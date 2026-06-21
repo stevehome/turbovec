@@ -10,7 +10,9 @@ Or with auto-reload:
 """
 from __future__ import annotations
 
+import anthropic as _anthropic_sdk
 import asyncio
+import base64
 import html
 import io
 import json
@@ -274,10 +276,39 @@ async def add_documents(text: str = Form(...)):
     return HTMLResponse(_doc_list_html())
 
 
+def _extract_text_with_claude(pdf_bytes: bytes) -> str:
+    """OCR a scanned PDF via Claude's native document block."""
+    client = _anthropic_sdk.Anthropic()
+    msg = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=8192,
+        messages=[{
+            "role": "user",
+            "content": [
+                {
+                    "type": "document",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "application/pdf",
+                        "data": base64.standard_b64encode(pdf_bytes).decode(),
+                    },
+                },
+                {"type": "text", "text": "Extract all text from this document, preserving paragraph structure. Output only the extracted text."},
+            ],
+        }],
+    )
+    return msg.content[0].text
+
+
 def _extract_text(filename: str, data: bytes) -> str:
     if filename.lower().endswith(".pdf"):
         reader = pypdf.PdfReader(io.BytesIO(data))
-        return "\n\n".join(page.extract_text() or "" for page in reader.pages)
+        text = "\n\n".join(page.extract_text() or "" for page in reader.pages)
+        # Fewer than 100 chars per page → likely a scanned/image PDF; fall back to Claude OCR.
+        if len(text.strip()) < 100 * len(reader.pages):
+            print(f"Sparse pypdf output ({len(text.strip())} chars, {len(reader.pages)} pages) — using Claude OCR")
+            text = _extract_text_with_claude(data)
+        return text
     return data.decode(errors="replace")
 
 
