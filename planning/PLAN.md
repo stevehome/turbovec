@@ -218,6 +218,62 @@ The app holds `_store` as a module-level global — single-process only. Multipl
 
 Start with **EC2** (fastest to validate), then move to **App Runner** once the Dockerfile is working. The S3 persistence swap is optional — a baked-in starter index is fine for a demo.
 
+## Future: pre-processing before chunking
+
+Right now text enters the index raw — directly from the textarea, uploaded file, or PDF extraction. Three approaches worth considering, ordered by impact:
+
+### 1. Contextual Retrieval (highest impact, most aligned with our stack)
+
+Anthropic's own technique: before indexing each chunk, call Claude to prepend a one-sentence context explaining the chunk's place in the source document.
+
+```
+"This passage is from the Python PEP-8 style guide and describes naming conventions for variables and functions."
+
+<original chunk text>
+```
+
+The context is prepended to the chunk *before* embedding, so the vector captures both the specific content and its broader meaning. Retrieval improves dramatically for chunks that lose meaning in isolation (e.g. "It was introduced in version 3.10" — introduced *what*?).
+
+**Cost:** one LLM call per chunk at index time. At demo scale (~100 chunks from a PDF) that's cheap and fast. Use `claude-haiku-4-5` (already a dep) with a small prompt.
+
+**Implementation:** wrap `_chunk_with_meta` to optionally call Claude for each chunk, prepend the context, then embed the combined text. Store the original text in `_docs` (for display) but embed the enriched version.
+
+**Why it matters more here than for most RAG demos:** turbovec uses highly compressed 2–4 bit vectors. A chunk that *clearly* expresses its own meaning compresses better — the quantization noise matters less when the signal is strong. Contextual enrichment and quantization are complementary.
+
+### 2. PDF noise stripping (practical, low effort)
+
+`pypdf.PdfReader` extracts text faithfully but PDFs commonly contain:
+- Repeated headers/footers ("Page 3 of 47", company name)
+- Table of contents / index pages
+- Watermarks ("DRAFT", "CONFIDENTIAL") that pollute every chunk
+
+A simple regex pass after extraction removes the worst offenders:
+```python
+import re
+text = re.sub(r'(?m)^\s*Page \d+ of \d+\s*$', '', text)
+text = re.sub(r'\n{3,}', '\n\n', text)  # collapse excessive blank lines
+```
+
+For heavier PDFs, `pymupdf` (fitz) extracts text with layout awareness and can skip header/footer regions by bounding box.
+
+**Worth doing** any time PDF upload is a primary use case. Low risk, no LLM cost.
+
+### 3. Semantic chunking (better boundaries, higher complexity)
+
+LangChain's `SemanticChunker` splits at embedding similarity drops rather than character count — chunks align with topic shifts rather than arbitrary size limits. Better for long narrative documents (legal, academic).
+
+**Tradeoff:** requires N+1 embedding calls during ingestion (one per candidate split point) rather than zero. For a small corpus that's fine; at scale it adds latency. Also makes chunk size unpredictable, which is harder to explain in the UI.
+
+**Skip for now unless** users complain that the fixed-size chunks cut across sentence or paragraph boundaries mid-thought.
+
+### What NOT to do: stop-word / noise-word removal
+
+Removing "the", "a", "and" etc. before chunking is a BM25-era technique for sparse retrieval. Dense embeddings (sentence-transformers) already handle function words internally — stripping them can hurt rather than help by degrading the sentence-level representations the model was trained on. Don't do this.
+
+### Recommended next step
+
+**Contextual Retrieval** — highest ROI, uses Claude which is already wired in, and directly improves the quality of what turbovec is compressing. Add a toggle in the upload flow: "Enrich chunks with context (uses Claude, slower)" — off by default so the fast path stays fast.
+
 ## Future ideas
 
 - Clear index — wipe everything for a fresh start
