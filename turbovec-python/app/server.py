@@ -158,6 +158,14 @@ else:
     _save_sources()
     print(f"{len(chunks)} chunks indexed.")
 
+# Backfill OCR cache for any PDF sources loaded before caching was introduced.
+for _src_name, _src_text in _sources.items():
+    if _src_name.lower().endswith(".pdf"):
+        _ocr_path = OCR_DIR / (_src_name + ".txt")
+        if not _ocr_path.exists():
+            _ocr_path.write_text(_src_text)
+            print(f"Backfilled OCR cache: {_ocr_path.name}")
+
 _llm = ChatAnthropic(model="claude-haiku-4-5-20251001", max_tokens=1024)
 
 app = FastAPI(title="turbovec RAG")
