@@ -131,9 +131,12 @@
                autofocus>
         <button id="ask-btn" onclick="ask()">Ask</button>
       </div>
+      <select id="source-filter" style="margin-bottom:0.5rem">
+        <option value="">All sources</option>
+      </select>
       <div style="margin-bottom:1rem;font-size:0.85rem;color:var(--pico-muted-color)">
         <label style="display:flex;align-items:center;gap:0.75rem;margin:0">
-          Sources
+          Sources (k)
           <input type="range" id="k-slider" min="1" max="10" value="3"
                  style="flex:1;margin:0" oninput="document.getElementById('k-val').textContent=this.value">
           <span id="k-val">3</span>
@@ -203,7 +206,7 @@ async function ask() {
     const response = await fetch('/query', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({question, k: parseInt(document.getElementById('k-slider').value)}),
+      body: JSON.stringify({question, k: parseInt(document.getElementById('k-slider').value), filter_source: document.getElementById('source-filter').value}),
     });
 
     if (!response.ok) {

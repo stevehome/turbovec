@@ -191,6 +191,15 @@ def _memory_stats() -> str:
     return f'{vec_line} · Process: {proc_mb:.0f} MB'
 
 
+def _source_filter_html() -> str:
+    sources = list({meta.get("source", "?") for _, (_, meta) in _store._docs.items()})
+    options = '<option value="">All sources</option>' + "".join(
+        f'<option value="{html.escape(s, quote=True)}">{html.escape(s)}</option>'
+        for s in sorted(sources)
+    )
+    return f'<select id="source-filter" hx-swap-oob="true" style="margin-bottom:0.5rem">{options}</select>'
+
+
 def _doc_list_html() -> str:
     # Group chunks by source, preserving insertion order.
     groups: dict[str, list[tuple[str, str, dict]]] = {}
@@ -239,6 +248,7 @@ def _doc_list_html() -> str:
         f'{_memory_stats()} · chunk_size={_chunk_size} overlap={_chunk_overlap}'
         f'{" · contextual=on" if _contextual else ""}</p>'
         f'</div>'
+        f'{_source_filter_html()}'
     )
 
 
@@ -254,8 +264,10 @@ async def query(request: Request):
     if not question:
         return HTMLResponse("", status_code=400)
     k = max(1, min(10, int(body.get("k", K))))
+    filter_source = body.get("filter_source", "").strip()
 
-    docs = _store.similarity_search_with_score(question, k=k)
+    src_filter = {"source": filter_source} if filter_source else None
+    docs = _store.similarity_search_with_score(question, k=k, filter=src_filter)
     sources = [
         {
             "text": d.page_content,
