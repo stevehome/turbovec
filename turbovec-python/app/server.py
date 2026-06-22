@@ -10,6 +10,7 @@ Or with auto-reload:
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import shutil
 from pathlib import Path
@@ -141,7 +142,7 @@ async def add_documents(text: str = Form(...)):
 async def upload_file(file: UploadFile):
     data = await file.read()
     filename = file.filename or "upload"
-    content = extract_text(filename, data)
+    content = await asyncio.to_thread(extract_text, filename, data)
     chunks, metas = chunk_with_meta(content, filename)
     if chunks:
         if state.contextual:
