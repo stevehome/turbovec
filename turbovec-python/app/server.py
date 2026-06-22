@@ -42,6 +42,8 @@ CORPUS_PATH = _HERE / "data" / "corpus.txt"
 INDEX_PATH = _HERE / "data" / "saved_index"
 SETTINGS_PATH = _HERE / "data" / "settings.json"
 SOURCES_PATH = _HERE / "data" / "sources.json"
+OCR_DIR = _HERE / "data" / "ocr"
+OCR_DIR.mkdir(exist_ok=True)
 K = 3
 _ENRICHMENT_CONCURRENCY = 5  # max concurrent Claude calls during chunk enrichment
 
@@ -369,9 +371,16 @@ def _extract_text(filename: str, data: bytes) -> str:
         reader = pypdf.PdfReader(io.BytesIO(data))
         text = "\n\n".join(page.extract_text() or "" for page in reader.pages)
         # Fewer than 100 chars per page → likely a scanned/image PDF; fall back to Claude OCR.
-        if len(text.strip()) < 100 * len(reader.pages):
-            print(f"Sparse pypdf output ({len(text.strip())} chars, {len(reader.pages)} pages) — using Claude OCR")
-            text = _extract_text_with_claude(data)
+        if len(text.strip()) < 100 * max(len(reader.pages), 1):
+            ocr_path = OCR_DIR / (filename + ".txt")
+            if ocr_path.exists():
+                print(f"Using cached OCR for {filename}: {ocr_path}")
+                text = ocr_path.read_text()
+            else:
+                print(f"Sparse pypdf output ({len(text.strip())} chars, {len(reader.pages)} pages) — using Claude OCR")
+                text = _extract_text_with_claude(data)
+                ocr_path.write_text(text)
+                print(f"OCR text cached to {ocr_path}")
         return text
     return data.decode(errors="replace")
 

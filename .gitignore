@@ -8,6 +8,7 @@ __pycache__/
 *.dSYM/
 *.tq
 app/data/saved_index/
+app/data/ocr/
 *.npy
 codebooks.npz
 target/
