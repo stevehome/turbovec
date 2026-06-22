@@ -192,12 +192,15 @@ def _memory_stats() -> str:
 
 
 def _source_filter_html() -> str:
-    sources = list({meta.get("source", "?") for _, (_, meta) in _store._docs.items()})
-    options = '<option value="">All sources</option>' + "".join(
+    sources = sorted({meta.get("source", "?") for _, (_, meta) in _store._docs.items()})
+    options = "".join(
         f'<option value="{html.escape(s, quote=True)}">{html.escape(s)}</option>'
-        for s in sorted(sources)
+        for s in sources
     )
-    return f'<select id="source-filter" hx-swap-oob="true" style="margin-bottom:0.5rem">{options}</select>'
+    return (
+        f'<select id="source-filter" multiple size="4" hx-swap-oob="true"'
+        f' style="margin-bottom:0.5rem;font-size:0.82rem">{options}</select>'
+    )
 
 
 def _doc_list_html() -> str:
@@ -264,9 +267,14 @@ async def query(request: Request):
     if not question:
         return HTMLResponse("", status_code=400)
     k = max(1, min(10, int(body.get("k", K))))
-    filter_source = body.get("filter_source", "").strip()
+    filter_sources = [s for s in body.get("filter_sources", []) if s]
 
-    src_filter = {"source": filter_source} if filter_source else None
+    if len(filter_sources) == 1:
+        src_filter = {"source": filter_sources[0]}
+    elif filter_sources:
+        src_filter = lambda doc: doc.metadata.get("source") in filter_sources
+    else:
+        src_filter = None
     docs = _store.similarity_search_with_score(question, k=k, filter=src_filter)
     sources = [
         {
