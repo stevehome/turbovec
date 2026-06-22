@@ -383,6 +383,77 @@ def _extract_text_with_claude(pdf_bytes: bytes) -> str:
     return msg.content[0].text
 ```
 
+## Future: scanned PDF → persisted text file
+
+The current implementation extracts text from a scanned PDF at upload time and stores it in `_sources[filename]` in memory and `sources.json` on disk. But the PDF binary itself is not kept — if the server restarts and you delete `sources.json`, the OCR'd text is gone and the PDF would need re-uploading and re-OCR'd.
+
+A natural extension: when a scanned PDF is detected and OCR'd, **write the extracted text out as a `.txt` file alongside the PDF** (or to a dedicated `app/data/ocr/` folder), then treat that `.txt` as the canonical source going forward. This gives:
+
+- A human-readable, editable version of the document
+- A persistent artefact that survives `sources.json` deletion
+- A way to review and correct OCR errors before indexing
+- A clean audit trail: one PDF → one `.txt` → N chunks
+
+### Detection approach
+
+Already implemented: `len(text.strip()) < 100 * num_pages` after pypdf extraction flags the PDF as image-based. This is reliable enough in practice — a scanned page that somehow contains one line of text would produce 60–70 chars, still well under the 100-char threshold.
+
+Refinement for edge cases: additionally check `len(text.strip()) / len(reader.pages) < 50` (chars per page) AND `num_pages > 0`. A one-page PDF with 90 chars of real text would pass the current threshold; the per-page average is more robust.
+
+### Persisted text file workflow
+
+```
+upload scanned.pdf
+  → pypdf: 0 chars extracted
+  → flagged as scanned → Claude OCR
+  → extracted text saved to app/data/ocr/scanned.pdf.txt
+  → _sources["scanned.pdf"] = text  (also in sources.json as now)
+  → chunks indexed as source="scanned.pdf" (unchanged)
+```
+
+Implementation sketch:
+
+```python
+OCR_DIR = _HERE / "data" / "ocr"
+OCR_DIR.mkdir(exist_ok=True)
+
+def _extract_text(filename: str, data: bytes) -> str:
+    if filename.lower().endswith(".pdf"):
+        reader = pypdf.PdfReader(io.BytesIO(data))
+        text = "\n\n".join(page.extract_text() or "" for page in reader.pages)
+        if len(text.strip()) < 100 * max(len(reader.pages), 1):
+            # Check if we already OCR'd this file
+            ocr_path = OCR_DIR / (filename + ".txt")
+            if ocr_path.exists():
+                print(f"Using cached OCR: {ocr_path}")
+                text = ocr_path.read_text()
+            else:
+                print(f"Scanned PDF detected — running Claude OCR on {filename}")
+                text = _extract_text_with_claude(data)
+                ocr_path.write_text(text)
+                print(f"OCR text saved to {ocr_path}")
+        return text
+    return data.decode(errors="replace")
+```
+
+### Review-before-index flow (optional enhancement)
+
+Instead of immediately indexing after OCR, a two-step flow:
+
+1. Upload PDF → detect scanned → OCR → save `.txt` → show a "Review extracted text" panel before indexing
+2. User can edit the `.txt` in-browser (a `<textarea>` pre-filled with OCR output), then click "Index this"
+3. The edited text is what gets chunked and stored in `_sources`
+
+This is valuable for low-quality scans where Claude's OCR may misread words. The textarea approach is consistent with the existing "Add text" panel. Implementation would be a new `POST /upload/preview` endpoint that returns the OCR'd text as HTML without indexing, and a separate `POST /upload/confirm` that takes the (possibly edited) text and indexes it.
+
+### What to add to `.gitignore` / `.dockerignore`
+
+`app/data/ocr/` should be gitignored (same as `saved_index/`) — OCR'd text from user documents shouldn't be committed. Add to `.dockerignore` for the same reason.
+
+### Recommended next step
+
+The caching check (`if ocr_path.exists()`) is the highest-value addition — it avoids re-paying the Claude OCR cost if the same PDF is uploaded again (e.g. after a server restart). The rest (review flow) is optional polish.
+
 ## Future: source document viewer
 
 After a query the Sources panel shows chunk previews and scores — but if a user wants to see more of a retrieved passage, or verify the context around it, there's no way to do that without going back to the original file.
