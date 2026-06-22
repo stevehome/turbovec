@@ -41,11 +41,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "langchain-text-splitters>=0.3.11",
     "numpy>=1.20",
-    "psutil>=7.2.2",
-    "pypdf>=6.13.2",
-    "python-dotenv>=1.2.1",
 ]
 
 [project.urls]
@@ -54,10 +50,24 @@ Repository = "https://github.com/RyanCodrai/turbovec"
 Issues = "https://github.com/RyanCodrai/turbovec/issues"
 
 [project.optional-dependencies]
-langchain = ["langchain-core>=0.3"]
+langchain   = ["langchain-core>=0.3"]
 llama-index = ["llama-index-core>=0.11"]
-haystack = ["haystack-ai>=2.0"]
-agno = ["agno>=2.0"]
+haystack    = ["haystack-ai>=2.0"]
+agno        = ["agno>=2.0"]
+app         = [
+    "anthropic>=0.20",
+    "fastapi>=0.110",
+    "jinja2>=3.1",
+    "langchain-anthropic>=0.3",
+    "langchain-core>=0.3",
+    "langchain-text-splitters>=0.3",
+    "psutil>=5.9",
+    "pypdf>=4.0",
+    "python-dotenv>=1.0",
+    "python-multipart>=0.0.9",
+    "sentence-transformers>=3.0",
+    "uvicorn>=0.29",
+]
 
 [tool.maturin]
 manifest-path = "Cargo.toml"
