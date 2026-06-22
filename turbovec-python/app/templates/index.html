@@ -239,7 +239,7 @@ async function ask() {
             const score = `<span style="color:var(--pico-muted-color);font-weight:normal"> · ${s.score}</span>`;
             const preview = s.text.length > 160 ? s.text.slice(0, 160) + '…' : s.text;
             const viewBtn = `<button class="secondary outline view-btn"
-              onclick="showContext(${JSON.stringify(s.source)}, ${s.chunk})">view ↗</button>`;
+              onclick='showContext(${JSON.stringify(s.source)}, ${s.chunk})'>view ↗</button>`;
             return `<p><strong>${label}${score}${viewBtn}</strong><br><span>${preview}</span></p>`;
           }).join('');
         } else if (msg.type === 'token') {
