@@ -482,6 +482,19 @@ async def rebuild(bit_width: int = Form(4)):
     return HTMLResponse(_doc_list_html())
 
 
+@app.post("/clear", response_class=HTMLResponse)
+async def clear_index():
+    global _store, _sources
+    _store = TurboQuantVectorStore(_embeddings)
+    _sources = {}
+    import shutil
+    if INDEX_PATH.exists():
+        shutil.rmtree(INDEX_PATH)
+    SETTINGS_PATH.unlink(missing_ok=True)
+    SOURCES_PATH.unlink(missing_ok=True)
+    return HTMLResponse(_doc_list_html())
+
+
 @app.post("/save", response_class=HTMLResponse)
 async def save_index():
     _store.dump(INDEX_PATH)
