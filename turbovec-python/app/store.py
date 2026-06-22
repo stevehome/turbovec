@@ -20,8 +20,9 @@ _HERE = Path(__file__).parent
 CORPUS_PATH   = _HERE / "data" / "corpus.txt"
 INDEX_PATH    = _HERE / "data" / "saved_index"
 SETTINGS_PATH = _HERE / "data" / "settings.json"
-SOURCES_PATH  = _HERE / "data" / "sources.json"
+SOURCES_DIR   = _HERE / "data" / "sources"
 OCR_DIR       = _HERE / "data" / "ocr"
+SOURCES_DIR.mkdir(exist_ok=True)
 OCR_DIR.mkdir(exist_ok=True)
 K = 3
 
@@ -49,13 +50,34 @@ def save_settings(chunk_size: int, chunk_overlap: int, contextual: bool) -> None
 
 
 def load_sources() -> dict[str, str]:
-    if SOURCES_PATH.exists():
-        return json.loads(SOURCES_PATH.read_text())
-    return {}
+    # Migrate from legacy sources.json if present.
+    legacy = _HERE / "data" / "sources.json"
+    if legacy.exists():
+        data = json.loads(legacy.read_text())
+        for name, text in data.items():
+            (SOURCES_DIR / name).write_text(text)
+        legacy.unlink()
+        print(f"Migrated {len(data)} sources from sources.json → data/sources/")
+    return {p.name: p.read_text() for p in sorted(SOURCES_DIR.iterdir()) if p.is_file()}
+
+
+def save_source(name: str, text: str) -> None:
+    """Write or overwrite a single source file."""
+    (SOURCES_DIR / name).write_text(text)
+
+
+def delete_source_file(name: str) -> None:
+    """Remove a single source file (no-op if missing)."""
+    (SOURCES_DIR / name).unlink(missing_ok=True)
 
 
 def save_sources() -> None:
-    SOURCES_PATH.write_text(json.dumps(state.sources))
+    """Rewrite all source files to match state.sources (used after bulk ops)."""
+    existing = {p.name for p in SOURCES_DIR.iterdir() if p.is_file()}
+    for name, text in state.sources.items():
+        (SOURCES_DIR / name).write_text(text)
+    for orphan in existing - state.sources.keys():
+        (SOURCES_DIR / orphan).unlink(missing_ok=True)
 
 
 def chunk_with_meta(text: str, source: str) -> tuple[list[str], list[dict]]:
@@ -70,11 +92,11 @@ def chunk_with_meta(text: str, source: str) -> tuple[list[str], list[dict]]:
 state = types.SimpleNamespace()
 
 _chunk_size, _chunk_overlap, _contextual = load_settings()
-state.chunk_size   = _chunk_size
+state.chunk_size    = _chunk_size
 state.chunk_overlap = _chunk_overlap
-state.contextual   = _contextual
-state.splitter     = RecursiveCharacterTextSplitter(chunk_size=_chunk_size, chunk_overlap=_chunk_overlap)
-state.sources      = load_sources()
+state.contextual    = _contextual
+state.splitter      = RecursiveCharacterTextSplitter(chunk_size=_chunk_size, chunk_overlap=_chunk_overlap)
+state.sources       = load_sources()
 
 print("Loading embedding model...")
 state.embeddings = LocalEmbeddings()
@@ -84,8 +106,9 @@ if INDEX_PATH.exists():
     state.store = TurboQuantVectorStore.load(INDEX_PATH, state.embeddings)
     print(f"{len(state.store._docs)} documents loaded.")
     if CORPUS_PATH.name not in state.sources and CORPUS_PATH.exists():
-        state.sources[CORPUS_PATH.name] = CORPUS_PATH.read_text()
-        save_sources()
+        corpus_text = CORPUS_PATH.read_text()
+        state.sources[CORPUS_PATH.name] = corpus_text
+        save_source(CORPUS_PATH.name, corpus_text)
 else:
     print(f"Indexing corpus from {CORPUS_PATH}...")
     corpus_text = CORPUS_PATH.read_text()
@@ -93,7 +116,7 @@ else:
     chunks = state.splitter.split_text(corpus_text)
     metas  = [{"source": CORPUS_PATH.name, "chunk": i} for i, _ in enumerate(chunks)]
     state.store = TurboQuantVectorStore.from_texts(chunks, state.embeddings, metadatas=metas)
-    save_sources()
+    save_source(CORPUS_PATH.name, corpus_text)
     print(f"{len(chunks)} chunks indexed.")
 
 for _src_name, _src_text in state.sources.items():

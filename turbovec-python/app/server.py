@@ -23,8 +23,9 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from ingest import enrich_chunks, extract_text
 from store import (
-    CORPUS_PATH, INDEX_PATH, SETTINGS_PATH, SOURCES_PATH,
-    K, chunk_with_meta, save_settings, save_sources, state,
+    CORPUS_PATH, INDEX_PATH, SETTINGS_PATH, SOURCES_DIR,
+    K, chunk_with_meta, delete_source_file, save_settings,
+    save_source, save_sources, state,
 )
 from turbovec.langchain import TurboQuantVectorStore
 from ui import doc_list_html
@@ -118,7 +119,7 @@ async def delete_source(source_name: str):
     if ids:
         state.store.delete(ids)
         state.sources.pop(source_name, None)
-        save_sources()
+        delete_source_file(source_name)
         state.store.dump(INDEX_PATH)
     return HTMLResponse(doc_list_html())
 
@@ -131,7 +132,7 @@ async def add_documents(text: str = Form(...)):
             chunks = await enrich_chunks(chunks, text)
         state.store.add_texts(chunks, metadatas=metas)
         state.sources["manual"] = (state.sources.get("manual", "") + "\n\n" + text).strip()
-        save_sources()
+        save_source("manual", state.sources["manual"])
         state.store.dump(INDEX_PATH)
     return HTMLResponse(doc_list_html())
 
@@ -147,7 +148,7 @@ async def upload_file(file: UploadFile):
             chunks = await enrich_chunks(chunks, content)
         state.store.add_texts(chunks, metadatas=metas)
         state.sources[filename] = content
-        save_sources()
+        save_source(filename, content)
         state.store.dump(INDEX_PATH)
     return HTMLResponse(doc_list_html())
 
@@ -164,7 +165,7 @@ async def reindex():
         if state.contextual:
             chunks = await enrich_chunks(chunks, corpus_text)
         state.store.add_texts(chunks, metadatas=metas)
-    save_sources()
+    save_source(CORPUS_PATH.name, corpus_text)
     state.store.dump(INDEX_PATH)
     return HTMLResponse(doc_list_html())
 
@@ -209,8 +210,10 @@ async def clear_index():
     state.sources = {}
     if INDEX_PATH.exists():
         shutil.rmtree(INDEX_PATH)
+    if SOURCES_DIR.exists():
+        shutil.rmtree(SOURCES_DIR)
+        SOURCES_DIR.mkdir()
     SETTINGS_PATH.unlink(missing_ok=True)
-    SOURCES_PATH.unlink(missing_ok=True)
     return HTMLResponse(doc_list_html())
 
 

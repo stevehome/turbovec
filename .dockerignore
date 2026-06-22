@@ -4,7 +4,7 @@ turbovec-python/.venv/
 turbovec-python/dist/
 turbovec-python/app/data/saved_index/
 turbovec-python/app/data/settings.json
-turbovec-python/app/data/sources.json
+turbovec-python/app/data/sources/
 turbovec-python/app/data/ocr/
 docs/
 planning/
