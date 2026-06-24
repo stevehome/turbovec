@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import types
 from pathlib import Path
 
@@ -26,16 +27,21 @@ SOURCES_DIR.mkdir(exist_ok=True)
 OCR_DIR.mkdir(exist_ok=True)
 K = 3
 
+EMBEDDING_MODEL = "BAAI/bge-base-en-v1.5"
+RERANKER_MODEL  = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+# BGE retrieval models expect this prefix on queries (not on documents).
+_BGE_QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
+
 
 class LocalEmbeddings(Embeddings):
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2") -> None:
+    def __init__(self, model_name: str = EMBEDDING_MODEL) -> None:
         self._model = SentenceTransformer(model_name)
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         return self._model.encode(texts, normalize_embeddings=True).tolist()
 
     def embed_query(self, text: str) -> list[float]:
-        return self._model.encode(text, normalize_embeddings=True).tolist()
+        return self._model.encode(_BGE_QUERY_PREFIX + text, normalize_embeddings=True).tolist()
 
 
 def load_settings() -> tuple[int, int, bool]:
@@ -86,6 +92,18 @@ def chunk_with_meta(text: str, source: str) -> tuple[list[str], list[dict]]:
     return chunks, metas
 
 
+def _build_index_from_corpus() -> TurboQuantVectorStore:
+    print(f"Indexing corpus from {CORPUS_PATH}...")
+    corpus_text = CORPUS_PATH.read_text()
+    state.sources[CORPUS_PATH.name] = corpus_text
+    chunks = state.splitter.split_text(corpus_text)
+    metas  = [{"source": CORPUS_PATH.name, "chunk": i} for i, _ in enumerate(chunks)]
+    store  = TurboQuantVectorStore.from_texts(chunks, state.embeddings, metadatas=metas)
+    save_source(CORPUS_PATH.name, corpus_text)
+    print(f"{len(chunks)} chunks indexed.")
+    return store
+
+
 # ---------------------------------------------------------------------------
 # Mutable application state — a single namespace imported by all modules.
 # ---------------------------------------------------------------------------
@@ -101,25 +119,28 @@ state.sources       = load_sources()
 print("Loading embedding model...")
 state.embeddings = LocalEmbeddings()
 print("Loading re-ranker...")
-state.reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+state.reranker = CrossEncoder(RERANKER_MODEL)
 
 if INDEX_PATH.exists():
     print(f"Loading saved index from {INDEX_PATH}...")
     state.store = TurboQuantVectorStore.load(INDEX_PATH, state.embeddings)
-    print(f"{len(state.store._docs)} documents loaded.")
-    if CORPUS_PATH.name not in state.sources and CORPUS_PATH.exists():
-        corpus_text = CORPUS_PATH.read_text()
-        state.sources[CORPUS_PATH.name] = corpus_text
-        save_source(CORPUS_PATH.name, corpus_text)
+    # Detect dim mismatch — happens when embedding model changes.
+    _embed_dim = len(state.embeddings.embed_query("test"))
+    if state.store._index.dim is not None and state.store._index.dim != _embed_dim:
+        print(
+            f"Embedding model changed ({state.store._index.dim}-dim → {_embed_dim}-dim). "
+            "Clearing incompatible index and re-indexing corpus..."
+        )
+        shutil.rmtree(INDEX_PATH)
+        state.store = _build_index_from_corpus()
+    else:
+        print(f"{len(state.store._docs)} documents loaded.")
+        if CORPUS_PATH.name not in state.sources and CORPUS_PATH.exists():
+            corpus_text = CORPUS_PATH.read_text()
+            state.sources[CORPUS_PATH.name] = corpus_text
+            save_source(CORPUS_PATH.name, corpus_text)
 else:
-    print(f"Indexing corpus from {CORPUS_PATH}...")
-    corpus_text = CORPUS_PATH.read_text()
-    state.sources[CORPUS_PATH.name] = corpus_text
-    chunks = state.splitter.split_text(corpus_text)
-    metas  = [{"source": CORPUS_PATH.name, "chunk": i} for i, _ in enumerate(chunks)]
-    state.store = TurboQuantVectorStore.from_texts(chunks, state.embeddings, metadatas=metas)
-    save_source(CORPUS_PATH.name, corpus_text)
-    print(f"{len(chunks)} chunks indexed.")
+    state.store = _build_index_from_corpus()
 
 for _src_name, _src_text in state.sources.items():
     if _src_name.lower().endswith(".pdf"):
