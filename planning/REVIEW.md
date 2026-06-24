@@ -172,8 +172,8 @@ uv run python app/server.py
 | Resource | Value |
 |----------|-------|
 | ECR repo | `182879431700.dkr.ecr.us-east-1.amazonaws.com/turbovec-rag` |
-| App Runner ARN | `arn:aws:apprunner:us-east-1:182879431700:service/turbovec-rag/59dbd5b073a64a78a85f48b65907dee7` |
-| Service URL | `https://vmk4jj3gpf.us-east-1.awsapprunner.com` |
+| App Runner ARN | `arn:aws:apprunner:us-east-1:182879431700:service/turbovec-rag/9e332d0af45149dbaf6cc2f60891443a` |
+| Service URL | `https://divqjjjhuh.us-east-1.awsapprunner.com` |
 | Region | us-east-1 |
 | Instance | 2 vCPU / 4 GB |
 | ECR access role | `arn:aws:iam::182879431700:role/service-role/AppRunnerECRAccessRole` |
