@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import shutil
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import numpy as np
@@ -27,15 +28,30 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from ingest import enrich_chunks, extract_text
 from store import (
     CORPUS_PATH, INDEX_PATH, SETTINGS_PATH, SOURCES_DIR,
-    K, chunk_with_meta, delete_source_file, save_settings,
+    K, chunk_with_meta, delete_source_file, initialize, save_settings,
     save_source, save_sources, state,
 )
 from turbovec.langchain import TurboQuantVectorStore
 from ui import doc_list_html
 
 _HERE = Path(__file__).parent
-app = FastAPI(title="turbovec RAG")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Fire initialization in a background thread so uvicorn can bind and serve
+    # health checks immediately. Real endpoints are guarded by state.ready.
+    asyncio.create_task(asyncio.to_thread(initialize))
+    yield
+
+
+app = FastAPI(title="turbovec RAG", lifespan=lifespan)
 templates = Jinja2Templates(directory=str(_HERE / "templates"))
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
 
 
 async def _hyde_embedding(question: str) -> list[float]:

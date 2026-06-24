@@ -106,47 +106,54 @@ def _build_index_from_corpus() -> TurboQuantVectorStore:
 
 # ---------------------------------------------------------------------------
 # Mutable application state — a single namespace imported by all modules.
+# Starts empty; populated by initialize() called from FastAPI lifespan.
 # ---------------------------------------------------------------------------
 state = types.SimpleNamespace()
+state.ready = False
 
-_chunk_size, _chunk_overlap, _contextual = load_settings()
-state.chunk_size    = _chunk_size
-state.chunk_overlap = _chunk_overlap
-state.contextual    = _contextual
-state.splitter      = RecursiveCharacterTextSplitter(chunk_size=_chunk_size, chunk_overlap=_chunk_overlap)
-state.sources       = load_sources()
 
-print("Loading embedding model...")
-state.embeddings = LocalEmbeddings()
-print("Loading re-ranker...")
-state.reranker = CrossEncoder(RERANKER_MODEL)
+def initialize() -> None:
+    """Load models and index. Runs in a thread after uvicorn binds port 8000."""
+    _chunk_size, _chunk_overlap, _contextual = load_settings()
+    state.chunk_size    = _chunk_size
+    state.chunk_overlap = _chunk_overlap
+    state.contextual    = _contextual
+    state.splitter      = RecursiveCharacterTextSplitter(chunk_size=_chunk_size, chunk_overlap=_chunk_overlap)
+    state.sources       = load_sources()
 
-if INDEX_PATH.exists():
-    print(f"Loading saved index from {INDEX_PATH}...")
-    state.store = TurboQuantVectorStore.load(INDEX_PATH, state.embeddings)
-    # Detect dim mismatch — happens when embedding model changes.
-    _embed_dim = len(state.embeddings.embed_query("test"))
-    if state.store._index.dim is not None and state.store._index.dim != _embed_dim:
-        print(
-            f"Embedding model changed ({state.store._index.dim}-dim → {_embed_dim}-dim). "
-            "Clearing incompatible index and re-indexing corpus..."
-        )
-        shutil.rmtree(INDEX_PATH)
-        state.store = _build_index_from_corpus()
+    print("Loading embedding model...")
+    state.embeddings = LocalEmbeddings()
+    print("Loading re-ranker...")
+    state.reranker = CrossEncoder(RERANKER_MODEL)
+
+    if INDEX_PATH.exists():
+        print(f"Loading saved index from {INDEX_PATH}...")
+        state.store = TurboQuantVectorStore.load(INDEX_PATH, state.embeddings)
+        # Detect dim mismatch — happens when embedding model changes.
+        _embed_dim = len(state.embeddings.embed_query("test"))
+        if state.store._index.dim is not None and state.store._index.dim != _embed_dim:
+            print(
+                f"Embedding model changed ({state.store._index.dim}-dim → {_embed_dim}-dim). "
+                "Clearing incompatible index and re-indexing corpus..."
+            )
+            shutil.rmtree(INDEX_PATH)
+            state.store = _build_index_from_corpus()
+        else:
+            print(f"{len(state.store._docs)} documents loaded.")
+            if CORPUS_PATH.name not in state.sources and CORPUS_PATH.exists():
+                corpus_text = CORPUS_PATH.read_text()
+                state.sources[CORPUS_PATH.name] = corpus_text
+                save_source(CORPUS_PATH.name, corpus_text)
     else:
-        print(f"{len(state.store._docs)} documents loaded.")
-        if CORPUS_PATH.name not in state.sources and CORPUS_PATH.exists():
-            corpus_text = CORPUS_PATH.read_text()
-            state.sources[CORPUS_PATH.name] = corpus_text
-            save_source(CORPUS_PATH.name, corpus_text)
-else:
-    state.store = _build_index_from_corpus()
+        state.store = _build_index_from_corpus()
 
-for _src_name, _src_text in state.sources.items():
-    if _src_name.lower().endswith(".pdf"):
-        _ocr_path = OCR_DIR / (_src_name + ".txt")
-        if not _ocr_path.exists():
-            _ocr_path.write_text(_src_text)
-            print(f"Backfilled OCR cache: {_ocr_path.name}")
+    for src_name, src_text in state.sources.items():
+        if src_name.lower().endswith(".pdf"):
+            ocr_path = OCR_DIR / (src_name + ".txt")
+            if not ocr_path.exists():
+                ocr_path.write_text(src_text)
+                print(f"Backfilled OCR cache: {ocr_path.name}")
 
-state.llm = ChatAnthropic(model="claude-haiku-4-5-20251001", max_tokens=1024)
+    state.llm = ChatAnthropic(model="claude-haiku-4-5-20251001", max_tokens=1024)
+    state.ready = True
+    print("Initialization complete.")
