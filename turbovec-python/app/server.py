@@ -15,6 +15,8 @@ import json
 import shutil
 from pathlib import Path
 
+import numpy as np
+
 import uvicorn
 from fastapi import FastAPI, Form, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
@@ -34,6 +36,24 @@ from ui import doc_list_html
 _HERE = Path(__file__).parent
 app = FastAPI(title="turbovec RAG")
 templates = Jinja2Templates(directory=str(_HERE / "templates"))
+
+
+async def _hyde_embedding(question: str) -> list[float]:
+    """Generate a hypothetical answer and return its document embedding (HyDE).
+
+    The hypothetical passage is phrased like a corpus document, so its
+    embedding lands closer to real relevant chunks than the raw question would.
+    Re-ranking still uses the original question for accuracy.
+    """
+    msg = await state.llm.ainvoke([HumanMessage(content=(
+        "Write a short passage (2-3 sentences) that would directly answer the question below. "
+        "Write as factual text, as if extracted from a reference document. "
+        "Do not mention the question itself.\n\n"
+        f"Question: {question}\n\nPassage:"
+    ))])
+    # Embed as a document (no query prefix) so it aligns with corpus embeddings.
+    vecs = await asyncio.to_thread(state.embeddings.embed_documents, [msg.content])
+    return vecs[0]
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -57,9 +77,10 @@ async def query(request: Request):
     else:
         src_filter = None
 
-    # Fetch more candidates than needed, then re-rank with a cross-encoder.
+    # HyDE: embed a hypothetical answer; re-rank with the original question.
     fetch_k = min(len(state.store._docs), max(k * 4, 20))
-    candidates = state.store.similarity_search_with_score(question, k=fetch_k, filter=src_filter)
+    hyde_vec = np.array(await _hyde_embedding(question), dtype=np.float32)
+    candidates = state.store._search_vector(hyde_vec, fetch_k, filter=src_filter)
 
     pairs = [(question, d.page_content) for d, _ in candidates]
     scores = await asyncio.to_thread(state.reranker.predict, pairs)
