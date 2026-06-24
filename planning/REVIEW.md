@@ -165,6 +165,103 @@ uv run python app/server.py
 
 ---
 
+## Deployment — AWS App Runner
+
+### Infrastructure
+
+| Resource | Value |
+|----------|-------|
+| ECR repo | `182879431700.dkr.ecr.us-east-1.amazonaws.com/turbovec-rag` |
+| App Runner ARN | `arn:aws:apprunner:us-east-1:182879431700:service/turbovec-rag/59dbd5b073a64a78a85f48b65907dee7` |
+| Service URL | `https://vmk4jj3gpf.us-east-1.awsapprunner.com` |
+| Region | us-east-1 |
+| Instance | 2 vCPU / 4 GB |
+| ECR access role | `arn:aws:iam::182879431700:role/service-role/AppRunnerECRAccessRole` |
+| AWS account | 182879431700 (user: aiengineer) |
+
+### Deploy procedure
+
+```bash
+# 1. Build image
+docker build -t turbovec-rag .
+
+# 2. Authenticate with ECR
+aws ecr get-login-password --region us-east-1 \
+  | docker login --username AWS --password-stdin \
+    182879431700.dkr.ecr.us-east-1.amazonaws.com
+
+# 3. Tag and push
+docker tag turbovec-rag:latest \
+  182879431700.dkr.ecr.us-east-1.amazonaws.com/turbovec-rag:latest
+docker push \
+  182879431700.dkr.ecr.us-east-1.amazonaws.com/turbovec-rag:latest
+
+# 4. Trigger redeployment (after first service exists)
+aws apprunner start-deployment \
+  --service-arn arn:aws:apprunner:us-east-1:182879431700:service/turbovec-rag/59dbd5b073a64a78a85f48b65907dee7 \
+  --region us-east-1
+
+# 5. Check status
+aws apprunner describe-service \
+  --service-arn arn:aws:apprunner:us-east-1:182879431700:service/turbovec-rag/59dbd5b073a64a78a85f48b65907dee7 \
+  --region us-east-1 \
+  --query 'Service.{Status:Status,URL:ServiceUrl}' --output table
+```
+
+### First-time service creation
+
+```bash
+aws apprunner create-service \
+  --service-name turbovec-rag \
+  --source-configuration '{
+    "ImageRepository": {
+      "ImageIdentifier": "182879431700.dkr.ecr.us-east-1.amazonaws.com/turbovec-rag:latest",
+      "ImageConfiguration": {
+        "Port": "8000",
+        "RuntimeEnvironmentVariables": {
+          "ANTHROPIC_API_KEY": "<key>"
+        }
+      },
+      "ImageRepositoryType": "ECR"
+    },
+    "AuthenticationConfiguration": {
+      "AccessRoleArn": "arn:aws:iam::182879431700:role/service-role/AppRunnerECRAccessRole"
+    }
+  }' \
+  --instance-configuration '{"Cpu": "2 vCPU", "Memory": "4 GB"}' \
+  --health-check-configuration '{"Protocol": "HTTP", "Path": "/health", "Interval": 20, "Timeout": 10, "HealthyThreshold": 1, "UnhealthyThreshold": 5}' \
+  --region us-east-1
+```
+
+### Known issue — startup health check failure
+
+**Problem:** The first deployment failed with "Health check failed. Check your configured port number."
+
+**Root cause:** All model loading (BGE-base-en-v1.5, cross-encoder, index) runs synchronously during Python module import in `store.py`, before uvicorn ever binds port 8000. App Runner fires health checks immediately after the container starts. Since uvicorn hasn't started yet, the health check gets connection refused and the deployment fails.
+
+**Fix required (not yet implemented):**
+
+1. Wrap all startup code in `store.py` in a `def initialize()` function — don't run at import time.
+2. In `server.py`, use FastAPI `lifespan` to call `initialize()` after uvicorn binds the port:
+
+```python
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await asyncio.to_thread(store.initialize)
+    yield
+
+app = FastAPI(title="turbovec RAG", lifespan=lifespan)
+```
+
+3. Add a `GET /health` endpoint that returns 200 immediately (before models are loaded).
+4. Update App Runner health check path from `/` to `/health`.
+
+With this fix, uvicorn binds port 8000 first, the health check passes immediately, and model loading completes in the background before any real requests are served.
+
+---
+
 ## Previous review (Phase 1 → Phase 2 transition)
 
 See `plan/REVIEW.md` for the earlier review written before the FastAPI + HTMX app was
