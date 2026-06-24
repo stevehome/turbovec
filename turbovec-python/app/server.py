@@ -56,11 +56,19 @@ async def query(request: Request):
         src_filter = lambda doc: doc.metadata.get("source") in filter_sources
     else:
         src_filter = None
-    docs = state.store.similarity_search_with_score(question, k=k, filter=src_filter)
+
+    # Fetch more candidates than needed, then re-rank with a cross-encoder.
+    fetch_k = min(len(state.store._docs), max(k * 4, 20))
+    candidates = state.store.similarity_search_with_score(question, k=fetch_k, filter=src_filter)
+
+    pairs = [(question, d.page_content) for d, _ in candidates]
+    scores = await asyncio.to_thread(state.reranker.predict, pairs)
+    ranked = sorted(zip(scores, candidates), key=lambda x: x[0], reverse=True)[:k]
+
     sources = [
         {"text": d.page_content, "source": d.metadata.get("source", "unknown"),
-         "chunk": d.metadata.get("chunk", 0), "score": round(score, 3)}
-        for d, score in docs
+         "chunk": d.metadata.get("chunk", 0), "score": round(float(score), 3)}
+        for score, (d, _) in ranked
     ]
     context = "\n".join(s["text"] for s in sources)
     prompt = f"Context:\n{context}\n\nQuestion: {question}\nAnswer concisely using only the context above."

@@ -45,8 +45,8 @@ RUN pip install --no-cache-dir \
     "langchain-anthropic>=0.3" "langchain-core>=0.3" \
     langchain-text-splitters pypdf psutil python-dotenv
 
-# Pre-download embedding model — avoids cold-start HuggingFace fetch
-RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
+# Pre-download models — avoids cold-start HuggingFace fetch
+RUN python -c "from sentence_transformers import SentenceTransformer, CrossEncoder; SentenceTransformer('all-MiniLM-L6-v2'); CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')"
 
 # Copy the app (corpus, templates; saved_index excluded via .dockerignore)
 COPY turbovec-python/app /app/app

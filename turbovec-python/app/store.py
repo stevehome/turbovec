@@ -12,7 +12,7 @@ load_dotenv()
 from langchain_anthropic import ChatAnthropic
 from langchain_core.embeddings import Embeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from sentence_transformers import SentenceTransformer
+from sentence_transformers import CrossEncoder, SentenceTransformer
 
 from turbovec.langchain import TurboQuantVectorStore
 
@@ -100,6 +100,8 @@ state.sources       = load_sources()
 
 print("Loading embedding model...")
 state.embeddings = LocalEmbeddings()
+print("Loading re-ranker...")
+state.reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
 
 if INDEX_PATH.exists():
     print(f"Loading saved index from {INDEX_PATH}...")
