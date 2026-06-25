@@ -86,9 +86,9 @@ def save_sources() -> None:
         (SOURCES_DIR / orphan).unlink(missing_ok=True)
 
 
-def chunk_with_meta(text: str, source: str) -> tuple[list[str], list[dict]]:
+def chunk_with_meta(text: str, source: str, visibility: str = "shared") -> tuple[list[str], list[dict]]:
     chunks = state.splitter.split_text(text)
-    metas = [{"source": source, "chunk": i} for i, _ in enumerate(chunks)]
+    metas = [{"source": source, "chunk": i, "visibility": visibility} for i, _ in enumerate(chunks)]
     return chunks, metas
 
 

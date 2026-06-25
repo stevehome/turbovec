@@ -132,7 +132,8 @@ async def query(request: Request, auth: dict | None = Depends(optional_auth)):
 @app.get("/documents", response_class=HTMLResponse)
 async def list_documents(auth: dict | None = Depends(optional_auth)):
     authenticated = auth is not None or not AUTH_ENABLED
-    return HTMLResponse(doc_list_html(authenticated=authenticated))
+    uid = (auth or {}).get("sub") if authenticated else None
+    return HTMLResponse(doc_list_html(authenticated=authenticated, user_id=uid))
 
 
 @app.get("/sources/{source_name}/context")
@@ -182,8 +183,9 @@ async def delete_source(source_name: str):
 
 
 @protected.post("/documents", response_class=HTMLResponse)
-async def add_documents(text: str = Form(...)):
-    chunks, metas = chunk_with_meta(text, "manual")
+async def add_documents(text: str = Form(...), auth: dict = Depends(require_auth)):
+    uid = auth.get("sub", "shared")
+    chunks, metas = chunk_with_meta(text, "manual", visibility=uid)
     if chunks:
         if state.contextual:
             chunks = await enrich_chunks(chunks, text)
@@ -191,15 +193,16 @@ async def add_documents(text: str = Form(...)):
         state.sources["manual"] = (state.sources.get("manual", "") + "\n\n" + text).strip()
         save_source("manual", state.sources["manual"])
         state.store.dump(INDEX_PATH)
-    return HTMLResponse(doc_list_html())
+    return HTMLResponse(doc_list_html(authenticated=True, user_id=uid))
 
 
 @protected.post("/upload", response_class=HTMLResponse)
-async def upload_file(file: UploadFile):
+async def upload_file(file: UploadFile, auth: dict = Depends(require_auth)):
+    uid = auth.get("sub", "shared")
     data = await file.read()
     filename = file.filename or "upload"
     content = await asyncio.to_thread(extract_text, filename, data)
-    chunks, metas = chunk_with_meta(content, filename)
+    chunks, metas = chunk_with_meta(content, filename, visibility=uid)
     if chunks:
         if state.contextual:
             chunks = await enrich_chunks(chunks, content)
@@ -207,7 +210,7 @@ async def upload_file(file: UploadFile):
         state.sources[filename] = content
         save_source(filename, content)
         state.store.dump(INDEX_PATH)
-    return HTMLResponse(doc_list_html())
+    return HTMLResponse(doc_list_html(authenticated=True, user_id=uid))
 
 
 @protected.post("/reindex", response_class=HTMLResponse)

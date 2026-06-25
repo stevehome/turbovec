@@ -39,9 +39,12 @@ def source_filter_html() -> str:
     )
 
 
-def doc_list_html(authenticated: bool = True) -> str:
+def doc_list_html(authenticated: bool = True, user_id: str | None = None) -> str:
     groups: dict[str, list[tuple[str, str, dict]]] = {}
     for sid, (text, meta) in state.store._docs.items():
+        vis = meta.get("visibility", "shared")
+        if vis != "shared" and vis != user_id:
+            continue  # hide other users' private docs
         groups.setdefault(meta.get("source", "?"), []).append((sid, text, meta))
 
     sections = ""
