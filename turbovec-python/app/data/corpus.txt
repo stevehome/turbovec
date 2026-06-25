@@ -38,3 +38,11 @@ LangChain is a framework for building LLM applications with chains of components
 LlamaIndex is a data framework for building RAG pipelines over custom data sources.
 Haystack is an open-source framework for building NLP pipelines including retrieval and generation.
 turbovec is a Rust vector index with Python bindings implementing the TurboQuant quantization algorithm.
+This app is a RAG (Retrieval-Augmented Generation) demo built on turbovec. Upload documents or paste text, and the app will answer questions about them using Claude as the language model.
+Documents are split into chunks, embedded using BAAI/bge-base-en-v1.5 (a 768-dimensional sentence embedding model), and stored in a turbovec vector index on disk.
+When you ask a question, the app generates a hypothetical answer using Claude (HyDE), embeds it, searches the index for the most relevant chunks, re-ranks them with a cross-encoder, then streams a final answer from Claude using only those chunks as context.
+The retrieval pipeline uses HyDE (Hypothetical Document Embeddings) to improve search quality — instead of embedding the raw question, Claude first writes a short passage that would answer it, and that passage is embedded and used for search.
+Cross-encoder re-ranking scores each retrieved chunk against the original question using a dedicated relevance model (ms-marco-MiniLM-L-6-v2), which is more accurate than the vector similarity alone.
+The web interface is built with FastAPI and HTMX. Answers stream token by token directly from Claude into the browser without a page reload.
+You can upload PDF and plain text files. Scanned PDFs without selectable text are processed with Claude's vision capabilities to extract the text via OCR.
+The app runs on AWS App Runner and stores the vector index to disk so documents persist across restarts. When run locally on a MacBook, no data leaves your machine.
