@@ -23,7 +23,7 @@ jobs:
     env:
       AWS_REGION: us-east-1
       ECR_REPO: 182879431700.dkr.ecr.us-east-1.amazonaws.com/turbovec-rag
-      SERVICE_ARN: arn:aws:apprunner:us-east-1:182879431700:service/turbovec-rag/9e332d0af45149dbaf6cc2f60891443a
+      SERVICE_ARN: arn:aws:apprunner:us-east-1:182879431700:service/turbovec-rag/33d5fdef7f10488bb219ab7b481f239c
 
     steps:
       - uses: actions/checkout@v4
@@ -46,12 +46,4 @@ jobs:
           docker push $ECR_REPO:latest
 
       - name: Trigger App Runner redeployment
-        run: |
-          STATUS=$(aws apprunner describe-service \
-            --service-arn $SERVICE_ARN --region $AWS_REGION \
-            --query 'Service.Status' --output text 2>/dev/null || echo "MISSING")
-          if [ "$STATUS" = "RUNNING" ]; then
-            aws apprunner start-deployment --service-arn $SERVICE_ARN --region $AWS_REGION
-          else
-            echo "Service status: $STATUS — skipping start-deployment (trigger manually once service is RUNNING)"
-          fi
+        run: aws apprunner start-deployment --service-arn $SERVICE_ARN --region $AWS_REGION
