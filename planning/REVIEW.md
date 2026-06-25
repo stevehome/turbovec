@@ -262,6 +262,76 @@ With this fix, uvicorn binds port 8000 first, the health check passes immediatel
 
 ---
 
+## Deployment war story — building for App Runner on an M1/M2/M3 Mac
+
+### What was implemented
+
+The lifespan fix above was implemented (`store.initialize()`, `GET /health`). The real blocker turned out to be a completely different problem: **architecture mismatch**.
+
+### The architecture problem
+
+App Runner runs on x86_64. An M-series Mac builds Docker images for arm64 by default. The first two deployments pushed an arm64 image to ECR. App Runner pulled it, tried to start the container, the container exited immediately (wrong ELF architecture), and the health check got connection refused — same symptom as the previous bug, different cause.
+
+There are no application logs at all when this happens (the CloudWatch log stream stays empty), which makes it look identical to the "uvicorn not started" issue.
+
+### Cross-compilation attempts
+
+`docker buildx build --platform linux/amd64` was the obvious fix. Three attempts:
+
+**Attempt 1 — pure QEMU emulation** (no `FROM --platform=$BUILDPLATFORM`)  
+QEMU runs the entire build — including Rust build scripts — as x86_64 binaries. Rust build scripts are arm64 ELF binaries. QEMU can't execute them.  
+Result: `signal: 4, SIGILL: illegal instruction` in the `quote` build script.
+
+**Attempt 2 — native builder, wrong packages**  
+`FROM --platform=$BUILDPLATFORM` makes the builder stage run natively on arm64 (no QEMU). Added `gcc-x86-64-linux-gnu` for the cross-linker and `libopenblas-dev:amd64` for the x86_64 OpenBLAS that turbovec links against.  
+Result: Rust compiled successfully. Linker failed: `cannot find crti.o` — the C runtime startup object for x86_64 wasn't installed.
+
+**Attempt 3 — add `crossbuild-essential-amd64`**  
+Replaced `gcc-x86-64-linux-gnu` with `crossbuild-essential-amd64` (the Debian meta-package that includes `libc6-dev:amd64` which provides `crti.o`). Also used `RUSTFLAGS="-C target-cpu=x86-64-v3 -L /usr/lib/x86_64-linux-gnu"`.  
+Result: `RUSTFLAGS` applies to arm64 build scripts too. `-C target-cpu=x86-64-v3` is invalid on arm64. Build scripts for `quote`, `proc-macro2`, `libc` etc. all failed immediately.
+
+**Attempt 4 — correct approach**  
+`gcc-x86-64-linux-gnu` + `libc6-dev:amd64` + `libopenblas-dev:amd64`. Moved cross-linker and `-L` path into a per-target cargo config (`/root/.cargo/config.toml`) instead of `RUSTFLAGS`, so arm64 build scripts are completely unaffected. No env vars touching the compiler flags.  
+Result: **Rust cross-compilation succeeded in 63 seconds.** But the subsequent step — `RUN python -c "... SentenceTransformer('BAAI/bge-base-en-v1.5') ..."` — hung for hours. HuggingFace model downloads inside a Docker build (where you can't see the progress) are unreliable; if the connection drops mid-download, the build hangs silently.
+
+### Is it feasible on an M-series Mac?
+
+**The Rust cross-compilation problem is solved.** The working Dockerfile approach:
+
+```dockerfile
+FROM --platform=$BUILDPLATFORM python:3.11-slim AS builder
+
+RUN dpkg --add-architecture amd64 && \
+    apt-get update && apt-get install -y --no-install-recommends \
+    curl build-essential pkg-config \
+    gcc-x86-64-linux-gnu \
+    libc6-dev:amd64 \
+    libopenblas-dev:amd64 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN rustup target add x86_64-unknown-linux-gnu
+# Per-target config — never touches arm64 build scripts
+RUN mkdir -p /root/.cargo && printf \
+    '[target.x86_64-unknown-linux-gnu]\nlinker = "x86_64-linux-gnu-gcc"\nrustflags = ["-L", "/usr/lib/x86_64-linux-gnu"]\n' \
+    >> /root/.cargo/config.toml
+
+RUN cd turbovec-python && maturin build --release -o /dist/ --target x86_64-unknown-linux-gnu
+```
+
+**The model pre-download step is the remaining blocker.** Baking HuggingFace models into the image during `docker build` is fragile — there's no retry, no progress display, and a stalled connection hangs silently for hours. Options:
+
+1. **Remove the model bake-in step from the Dockerfile** and instead download models at container startup (first request is slow but deployment is reliable). Use `HF_HUB_OFFLINE=0` and accept the cold-start penalty, or mount a model cache volume.
+2. **Pre-download to a local path and COPY into the image** — download models outside Docker, copy them in with `COPY`. Reliable but requires 500 MB of models on disk locally.
+3. **Use a CI/CD runner on x86_64** — GitHub Actions `ubuntu-latest` runner builds natively, no cross-compilation needed. The workflow `.github/workflows/deploy.yml` is already committed and the IAM credentials are set as repo secrets. Blocked only by GitHub billing (`AKIASVFDWVQKAGCBT252` is the Actions IAM user, secrets set in stevehome/turbovec-demo).
+
+### Recommended path forward
+
+Fix the GitHub billing issue — go to github.com/settings/billing and verify payment method. Once Actions runs, every push to main automatically builds on x86_64, pushes to ECR, and triggers App Runner. No local Docker builds needed.
+
+If billing can't be fixed quickly, use option 2 (local model download + COPY) to get a one-time working image built and deployed.
+
+---
+
 ## Previous review (Phase 1 → Phase 2 transition)
 
 See `plan/REVIEW.md` for the earlier review written before the FastAPI + HTMX app was
