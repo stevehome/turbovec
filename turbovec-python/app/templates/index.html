@@ -7,8 +7,12 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
   <script src="https://unpkg.com/htmx.org@2.0.4"></script>
   {% if clerk_pk %}
-  <script>window.__clerk_pk = "{{ clerk_pk }}";</script>
-  <script src="{{ clerk_script_url }}" type="text/javascript"></script>
+  <script
+    data-clerk-publishable-key="{{ clerk_pk }}"
+    src="{{ clerk_script_url }}"
+    type="text/javascript"
+    crossorigin="anonymous"
+  ></script>
   {% endif %}
   <style>
     body { padding: 1.5rem 0; }
@@ -196,26 +200,24 @@
 let _clerkToken = null;
 
 async function _initClerk() {
-  if (!window.__clerk_pk) return;
-  await Clerk.load({ publishableKey: window.__clerk_pk });
-  if (!Clerk.user) {
+  if (!window.Clerk) return;
+  await window.Clerk.load();
+  if (!window.Clerk.user) {
     const gate = document.getElementById('auth-gate');
     gate.style.display = 'flex';
-    Clerk.mountSignIn(document.getElementById('clerk-sign-in'));
+    window.Clerk.mountSignIn(document.getElementById('clerk-sign-in'));
     return;
   }
-  _clerkToken = await Clerk.session.getToken();
+  _clerkToken = await window.Clerk.session.getToken();
   document.getElementById('sign-out-btn').style.display = 'inline-block';
-  setInterval(async () => { _clerkToken = await Clerk.session.getToken(); }, 55_000);
+  setInterval(async () => { _clerkToken = await window.Clerk.session.getToken(); }, 55_000);
 }
 
 document.addEventListener('htmx:configRequest', function(e) {
   if (_clerkToken) e.detail.headers['Authorization'] = 'Bearer ' + _clerkToken;
 });
 
-if (window.__clerk_pk) {
-  window.addEventListener('load', _initClerk);
-}
+window.addEventListener('load', _initClerk);
 // ---- end Clerk auth ----
 
 function _authHeaders(extra) {
