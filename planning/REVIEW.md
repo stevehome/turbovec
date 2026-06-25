@@ -145,6 +145,137 @@ For a demo being shared with a small number of people: **Option 2 (Clerk)**. It'
 
 ---
 
+## Multi-user data model — private and shared documents
+
+### Current state
+
+All signed-in users share one global `state.store`. Any document uploaded by one user is visible to all others and counts against the same index. There is no isolation.
+
+### Proposed design — two visibility tiers
+
+Add a `visibility` field to every document's metadata: either `"shared"` (visible to all) or the Clerk user ID (e.g. `"user_2abc..."`) for private documents. The query filter includes both the calling user's ID and `"shared"`.
+
+**Storage:** No structural change to turbovec — metadata is already a free-form dict per chunk. Just store `{"source": ..., "chunk": ..., "visibility": "shared" | user_id}`.
+
+**Query change** (`/query`):
+```python
+uid = auth_payload["sub"]   # Clerk user ID from JWT
+src_filter = lambda doc: doc.metadata.get("visibility") in ("shared", uid)
+# Combined with any source filter the user applied
+```
+
+**Upload:** Add a "Make public" checkbox (unchecked by default). Pass `visibility` in the form body; routes read it from `require_auth` return value for the user ID.
+
+**Doc list:** Show shared docs with a globe icon; private docs are only visible to their owner. Admin users (identified by a Clerk role or a hardcoded user ID list) can see and delete all docs.
+
+### Shared corpus (`corpus.txt`)
+
+The existing `corpus.txt` reindex button makes sense as the admin-only "shared knowledge base" path. Tag all corpus chunks `visibility="shared"`. Only users with the admin role can re-index it.
+
+### Storage implications
+
+A single `TurboQuantVectorStore` works fine — turbovec already supports per-vector metadata and filtered search. No need for per-user index objects. Memory scales with total document count, not user count.
+
+### Implementation steps (when needed)
+
+1. Pass `auth_payload` into route handlers (change `require_auth` return type to include `sub`)
+2. Add `visibility` to `chunk_with_meta()` signature
+3. Update `/documents`, `/upload`, `/reindex` to set metadata
+4. Update `/query` filter logic
+5. Update doc list UI — filter server-side to caller's docs + shared
+6. Add admin role check for corpus reindex and shared upload
+
+---
+
+## Document size limits
+
+Currently no limits are enforced. A large upload can exhaust the 4 GB App Runner instance or tie up the event loop for minutes.
+
+### Recommended limits
+
+| Boundary | Limit | Reason |
+|----------|-------|--------|
+| Upload file size | 10 MB | Covers most PDFs; beyond this OCR + embedding takes minutes |
+| Extracted text per document | 500 KB (~500 pages) | Caps chunk count at ~1 000 chunks/doc |
+| Chunks per source | 500 | Prevents one source from dominating the index |
+| Total index RAM | 80% of available | Already tracked via `psutil`; reject uploads when low |
+
+### Implementation
+
+In `/upload`, check immediately after `await file.read()`:
+```python
+if len(data) > 10 * 1024 * 1024:
+    return HTMLResponse("File exceeds 10 MB limit.", status_code=413)
+```
+
+After text extraction, check extracted length:
+```python
+if len(content) > 500_000:
+    content = content[:500_000]  # or reject with 413
+```
+
+Cap chunks:
+```python
+if len(chunks) > 500:
+    chunks, metas = chunks[:500], metas[:500]
+```
+
+None of these require new dependencies.
+
+---
+
+## Rate limiting
+
+Currently unlimited. A user can flood `/query` (each call = 1 Claude invocation + BGE embedding) or `/upload` with large files. With Clerk auth the risk is lower (only signed-in users), but still worth capping.
+
+### Recommended per-user limits
+
+| Endpoint | Limit | Reason |
+|----------|-------|--------|
+| `POST /query` | 10 req/min | Each query = Claude API call (cost + latency) |
+| `POST /upload` | 5 req/min | OCR + embedding is CPU-heavy |
+| `POST /documents` | 20 req/min | Text add is lighter but still runs the embedder |
+| All others | 30 req/min | Corpus management, saves, deletes |
+
+### Implementation options
+
+**Option A — in-process token bucket (no dependencies)**
+
+A module-level dict tracks `{user_id: (request_count, window_start)}`. Reset the count every 60 seconds. One function, ~15 lines, works perfectly for a single App Runner instance.
+
+```python
+import time
+_rate: dict[str, tuple[int, float]] = {}
+
+def check_rate(user_id: str, limit: int) -> bool:
+    count, start = _rate.get(user_id, (0, time.monotonic()))
+    if time.monotonic() - start > 60:
+        count, start = 0, time.monotonic()
+    _rate[user_id] = (count + 1, start)
+    return count < limit
+```
+
+Call from each protected route and raise `HTTPException(429)` if it returns False. No Redis, no extra packages.
+
+**Option B — `slowapi` library**
+
+Drop-in FastAPI middleware backed by in-memory storage (or Redis for multi-instance). Cleaner if limits need to differ per route:
+
+```python
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+limiter = Limiter(key_func=lambda req: req.state.user_id)
+
+@protected.post("/query")
+@limiter.limit("10/minute")
+async def query(request: Request, ...):
+    ...
+```
+
+Option A is recommended for now — it's sufficient for a single App Runner instance and adds zero dependencies.
+
+---
+
 ## Clean separation — shipping without source
 
 The goal: publish `turbovec` to crates.io and PyPI, then run the demo app by installing
