@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import shutil
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -19,12 +20,13 @@ from pathlib import Path
 import numpy as np
 
 import uvicorn
-from fastapi import FastAPI, Form, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, FastAPI, Form, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from langchain_core.messages import HumanMessage
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
+from auth import require_auth, script_url as _clerk_script_url
 from ingest import enrich_chunks, extract_text
 from store import (
     CORPUS_PATH, INDEX_PATH, SETTINGS_PATH, SOURCES_DIR,
@@ -47,6 +49,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="turbovec RAG", lifespan=lifespan)
 templates = Jinja2Templates(directory=str(_HERE / "templates"))
+protected = APIRouter(dependencies=[Depends(require_auth)])
 
 
 @app.get("/health")
@@ -74,10 +77,13 @@ async def _hyde_embedding(question: str) -> list[float]:
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
-    return templates.TemplateResponse(request=request, name="index.html")
+    return templates.TemplateResponse(request=request, name="index.html", context={
+        "clerk_pk": os.environ.get("CLERK_PUBLISHABLE_KEY", ""),
+        "clerk_script_url": _clerk_script_url(),
+    })
 
 
-@app.post("/query")
+@protected.post("/query")
 async def query(request: Request):
     body = await request.json()
     question = body.get("question", "").strip()
@@ -119,12 +125,12 @@ async def query(request: Request):
     return StreamingResponse(generate(), media_type="text/plain")
 
 
-@app.get("/documents", response_class=HTMLResponse)
+@protected.get("/documents", response_class=HTMLResponse)
 async def list_documents():
     return HTMLResponse(doc_list_html())
 
 
-@app.get("/sources/{source_name}/context")
+@protected.get("/sources/{source_name}/context")
 async def source_context(source_name: str, chunk_index: int = Query(0), window: int = Query(500)):
     full_text = state.sources.get(source_name, "")
     chunk_text = next(
@@ -151,7 +157,7 @@ async def source_context(source_name: str, chunk_index: int = Query(0), window: 
     })
 
 
-@app.delete("/documents/{doc_id}", response_class=HTMLResponse)
+@protected.delete("/documents/{doc_id}", response_class=HTMLResponse)
 async def delete_document(doc_id: str):
     if doc_id in state.store._docs:
         state.store.delete([doc_id])
@@ -159,7 +165,7 @@ async def delete_document(doc_id: str):
     return HTMLResponse(doc_list_html())
 
 
-@app.delete("/sources/{source_name}", response_class=HTMLResponse)
+@protected.delete("/sources/{source_name}", response_class=HTMLResponse)
 async def delete_source(source_name: str):
     ids = [sid for sid, (_, meta) in state.store._docs.items() if meta.get("source") == source_name]
     if ids:
@@ -170,7 +176,7 @@ async def delete_source(source_name: str):
     return HTMLResponse(doc_list_html())
 
 
-@app.post("/documents", response_class=HTMLResponse)
+@protected.post("/documents", response_class=HTMLResponse)
 async def add_documents(text: str = Form(...)):
     chunks, metas = chunk_with_meta(text, "manual")
     if chunks:
@@ -183,7 +189,7 @@ async def add_documents(text: str = Form(...)):
     return HTMLResponse(doc_list_html())
 
 
-@app.post("/upload", response_class=HTMLResponse)
+@protected.post("/upload", response_class=HTMLResponse)
 async def upload_file(file: UploadFile):
     data = await file.read()
     filename = file.filename or "upload"
@@ -199,7 +205,7 @@ async def upload_file(file: UploadFile):
     return HTMLResponse(doc_list_html())
 
 
-@app.post("/reindex", response_class=HTMLResponse)
+@protected.post("/reindex", response_class=HTMLResponse)
 async def reindex():
     old_ids = [sid for sid, (_, meta) in state.store._docs.items() if meta.get("source") == CORPUS_PATH.name]
     if old_ids:
@@ -216,7 +222,7 @@ async def reindex():
     return HTMLResponse(doc_list_html())
 
 
-@app.post("/rechunk", response_class=HTMLResponse)
+@protected.post("/rechunk", response_class=HTMLResponse)
 async def rechunk(chunk_size: int = Form(500), chunk_overlap: int = Form(50), contextual: str = Form("")):
     chunk_size = max(50, min(2000, chunk_size))
     chunk_overlap = max(0, min(chunk_size - 1, chunk_overlap))
@@ -240,7 +246,7 @@ async def rechunk(chunk_size: int = Form(500), chunk_overlap: int = Form(50), co
     return HTMLResponse(doc_list_html())
 
 
-@app.post("/rebuild", response_class=HTMLResponse)
+@protected.post("/rebuild", response_class=HTMLResponse)
 async def rebuild(bit_width: int = Form(4)):
     bit_width = max(2, min(4, bit_width))
     texts = [text for text, _meta in state.store._docs.values()]
@@ -250,7 +256,7 @@ async def rebuild(bit_width: int = Form(4)):
     return HTMLResponse(doc_list_html())
 
 
-@app.post("/clear", response_class=HTMLResponse)
+@protected.post("/clear", response_class=HTMLResponse)
 async def clear_index():
     state.store   = TurboQuantVectorStore(state.embeddings)
     state.sources = {}
@@ -263,11 +269,13 @@ async def clear_index():
     return HTMLResponse(doc_list_html())
 
 
-@app.post("/save", response_class=HTMLResponse)
+@protected.post("/save", response_class=HTMLResponse)
 async def save_index():
     state.store.dump(INDEX_PATH)
     return HTMLResponse('<span class="save-ok">Index saved.</span>')
 
+
+app.include_router(protected)
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

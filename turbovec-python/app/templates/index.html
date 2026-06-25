@@ -6,6 +6,10 @@
   <title>turbovec RAG</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
   <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+  {% if clerk_pk %}
+  <script>window.__clerk_pk = "{{ clerk_pk }}";</script>
+  <script src="{{ clerk_script_url }}" type="text/javascript"></script>
+  {% endif %}
   <style>
     body { padding: 1.5rem 0; }
     .layout { display: grid; grid-template-columns: 1fr 2fr; gap: 2rem; align-items: start; }
@@ -29,9 +33,24 @@
 </head>
 <body>
 <main class="container">
-  <hgroup>
-    <h1>turbovec RAG</h1>
-    <p>Local vector search + Claude — fully private, when run locally on a macbook</p>
+  {% if clerk_pk %}
+  <div id="auth-gate" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:9999;align-items:center;justify-content:center">
+    <div style="background:var(--pico-background-color);padding:2rem;border-radius:var(--pico-border-radius);max-width:420px;width:90%">
+      <div id="clerk-sign-in"></div>
+    </div>
+  </div>
+  {% endif %}
+
+  <hgroup style="display:flex;align-items:center;justify-content:space-between">
+    <div>
+      <h1>turbovec RAG</h1>
+      <p>Local vector search + Claude — fully private, when run locally on a macbook</p>
+    </div>
+    {% if clerk_pk %}
+    <button id="sign-out-btn" class="secondary outline"
+            style="display:none;padding:0.3rem 0.9rem;font-size:0.85rem;white-space:nowrap"
+            onclick="Clerk.signOut()">Sign out</button>
+    {% endif %}
   </hgroup>
 
   <div class="layout">
@@ -173,6 +192,38 @@
 </dialog>
 
 <script>
+// ---- Clerk auth ----
+let _clerkToken = null;
+
+async function _initClerk() {
+  if (!window.__clerk_pk) return;
+  await Clerk.load();
+  if (!Clerk.user) {
+    const gate = document.getElementById('auth-gate');
+    gate.style.display = 'flex';
+    Clerk.mountSignIn(document.getElementById('clerk-sign-in'));
+    return;
+  }
+  _clerkToken = await Clerk.session.getToken();
+  document.getElementById('sign-out-btn').style.display = 'inline-block';
+  setInterval(async () => { _clerkToken = await Clerk.session.getToken(); }, 55_000);
+}
+
+document.addEventListener('htmx:configRequest', function(e) {
+  if (_clerkToken) e.detail.headers['Authorization'] = 'Bearer ' + _clerkToken;
+});
+
+if (window.__clerk_pk) {
+  window.addEventListener('load', _initClerk);
+}
+// ---- end Clerk auth ----
+
+function _authHeaders(extra) {
+  const h = Object.assign({}, extra);
+  if (_clerkToken) h['Authorization'] = 'Bearer ' + _clerkToken;
+  return h;
+}
+
 async function showContext(source, chunkIndex) {
   const modal = document.getElementById('ctx-modal');
   const title = document.getElementById('ctx-title');
@@ -181,7 +232,8 @@ async function showContext(source, chunkIndex) {
   body.textContent  = 'Loading…';
   modal.showModal();
   try {
-    const r = await fetch(`/sources/${encodeURIComponent(source)}/context?chunk_index=${chunkIndex}&window=500`);
+    const r = await fetch(`/sources/${encodeURIComponent(source)}/context?chunk_index=${chunkIndex}&window=500`,
+      { headers: _authHeaders() });
     if (!r.ok) { body.textContent = 'Context not available.'; return; }
     const d = await r.json();
     body.innerHTML =
@@ -213,7 +265,7 @@ async function ask() {
   try {
     const response = await fetch('/query', {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      headers: _authHeaders({'Content-Type': 'application/json'}),
       body: JSON.stringify({question, k: parseInt(document.getElementById('k-slider').value), filter_sources: Array.from(document.getElementById('source-filter').selectedOptions).map(o => o.value)}),
     });
 
