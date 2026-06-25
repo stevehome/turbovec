@@ -197,7 +197,7 @@ let _clerkToken = null;
 
 async function _initClerk() {
   if (!window.__clerk_pk) return;
-  await Clerk.load();
+  await Clerk.load({ publishableKey: window.__clerk_pk });
   if (!Clerk.user) {
     const gate = document.getElementById('auth-gate');
     gate.style.display = 'flex';
