@@ -69,6 +69,82 @@ file under `data/sources/<filename>`.
 
 ---
 
+## Authentication options
+
+The app is currently open — anyone with the URL can add/delete documents and query the index. Three realistic options, simplest first.
+
+### Option 1 — HTTP Basic Auth (10 minutes, zero dependencies)
+
+FastAPI has `HTTPBasic` built in. Add a single dependency middleware that checks every request against a hardcoded or env-var username/password. No sign-in UI needed — the browser shows a native prompt.
+
+```python
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
+import secrets, os
+
+security = HTTPBasic()
+
+def require_auth(credentials: HTTPBasicCredentials = Depends(security)):
+    ok = (
+        secrets.compare_digest(credentials.username, os.environ["AUTH_USER"]) and
+        secrets.compare_digest(credentials.password, os.environ["AUTH_PASS"])
+    )
+    if not ok:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
+                            headers={"WWW-Authenticate": "Basic"})
+```
+
+Add `Depends(require_auth)` to every route, or apply it globally via a middleware. Set `AUTH_USER` / `AUTH_PASS` as App Runner environment variables.
+
+**Good for:** locking down a single-user demo quickly.  
+**Not good for:** multiple users, sign-up flows, or anything public-facing.
+
+---
+
+### Option 2 — Clerk (recommended for multi-user)
+
+[Clerk](https://clerk.com) is a hosted auth provider with a generous free tier (10k MAU). It handles sign-in UI, JWTs, session management, and social logins out of the box.
+
+**How it fits this app:**
+
+1. Add the Clerk JS SDK to `index.html` — it injects a `<SignIn>` component and attaches a JWT to every fetch automatically.
+2. Verify the JWT in FastAPI using Clerk's public key:
+
+```python
+from clerk_backend_api import Clerk
+clerk = Clerk(bearer_auth=os.environ["CLERK_SECRET_KEY"])
+
+async def require_auth(request: Request):
+    token = request.headers.get("Authorization", "").removeprefix("Bearer ")
+    payload = clerk.verify_token(token)   # raises on invalid/expired
+    return payload
+```
+
+3. Set `CLERK_PUBLISHABLE_KEY` (frontend) and `CLERK_SECRET_KEY` (backend) as App Runner env vars.
+
+HTMX works fine with Clerk because HTMX sends the same headers as fetch — just add `hx-headers='{"Authorization": "Bearer <token>"}'` to the `<body>` tag and Clerk's JS fills in the token automatically.
+
+**Good for:** sharing the demo with a small team, sign-up self-service, social logins (Google, GitHub).  
+**Effort:** ~2 hours.  
+**Cost:** free up to 10k MAU.
+
+---
+
+### Option 3 — IP allowlist at App Runner level (no code)
+
+App Runner supports VPC ingress — restrict the service to a specific IP or CIDR via a VPC connector + security group, without touching the app code at all.
+
+**Good for:** restricting to an office IP or personal IP while the app stays simple.  
+**Not good for:** anyone who needs access from multiple locations.
+
+---
+
+### Recommendation
+
+For a demo being shared with a small number of people: **Option 2 (Clerk)**. It's production-grade, takes an afternoon, and the free tier covers this use case entirely. Option 1 is fine for a temporary lock while Clerk is being set up.
+
+---
+
 ## Clean separation — shipping without source
 
 The goal: publish `turbovec` to crates.io and PyPI, then run the demo app by installing
