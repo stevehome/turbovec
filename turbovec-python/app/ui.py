@@ -39,7 +39,7 @@ def source_filter_html() -> str:
     )
 
 
-def doc_list_html() -> str:
+def doc_list_html(authenticated: bool = True) -> str:
     groups: dict[str, list[tuple[str, str, dict]]] = {}
     for sid, (text, meta) in state.store._docs.items():
         groups.setdefault(meta.get("source", "?"), []).append((sid, text, meta))
@@ -48,27 +48,33 @@ def doc_list_html() -> str:
     for source, chunks in groups.items():
         src_escaped = html.escape(source)
         src_url = html.escape(source, quote=True)
+        delete_chunk_btn = (
+            f'<button style="padding:0 0.3rem;font-size:0.72rem" class="secondary outline"'
+            f' hx-delete="/documents/{{}}"'
+            f' hx-target="#doc-list" hx-swap="outerHTML"'
+            f' hx-confirm="Delete this chunk?">×</button>'
+        ) if authenticated else ""
         rows = "".join(
             f'<li style="display:flex;align-items:baseline;gap:0.5rem">'
             f'<em>#{meta.get("chunk", 0) + 1}</em> '
             f'<span style="flex:1">{html.escape(text[:80])}{"…" if len(text) > 80 else ""}</span>'
-            f'<button style="padding:0 0.3rem;font-size:0.72rem" class="secondary outline"'
-            f' hx-delete="/documents/{sid}"'
-            f' hx-target="#doc-list" hx-swap="outerHTML"'
-            f' hx-confirm="Delete this chunk?">×</button>'
-            f'</li>'
+            + (delete_chunk_btn.format(sid) if authenticated else "")
+            + f'</li>'
             for sid, text, meta in chunks
         )
+        delete_source_btn = (
+            f'<button style="padding:0 0.4rem;font-size:0.72rem;margin-left:auto" class="secondary outline"'
+            f' hx-delete="/sources/{src_url}"'
+            f' hx-target="#doc-list" hx-swap="outerHTML"'
+            f' hx-confirm="Delete all chunks from {src_escaped}?">delete source</button>'
+        ) if authenticated else ""
         sections += (
             f'<details style="margin-bottom:0.5rem">'
             f'<summary style="display:flex;align-items:center;gap:0.5rem;cursor:pointer">'
             f'<strong>{src_escaped}</strong>'
             f'<small style="color:var(--pico-muted-color)">{len(chunks)} chunk{"s" if len(chunks) != 1 else ""}</small>'
-            f'<button style="padding:0 0.4rem;font-size:0.72rem;margin-left:auto" class="secondary outline"'
-            f' hx-delete="/sources/{src_url}"'
-            f' hx-target="#doc-list" hx-swap="outerHTML"'
-            f' hx-confirm="Delete all chunks from {src_escaped}?">delete source</button>'
-            f'</summary>'
+            + delete_source_btn
+            + f'</summary>'
             f'<ul class="doc-list">{rows}</ul>'
             f'</details>'
         )

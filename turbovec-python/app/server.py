@@ -26,7 +26,7 @@ from fastapi.templating import Jinja2Templates
 from langchain_core.messages import HumanMessage
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-from auth import require_auth, script_url as _clerk_script_url
+from auth import ENABLED as AUTH_ENABLED, optional_auth, require_auth, script_url as _clerk_script_url
 from ingest import enrich_chunks, extract_text
 from store import (
     CORPUS_PATH, INDEX_PATH, SETTINGS_PATH, SOURCES_DIR,
@@ -83,8 +83,8 @@ async def index(request: Request):
     })
 
 
-@protected.post("/query")
-async def query(request: Request):
+@app.post("/query")
+async def query(request: Request, auth: dict | None = Depends(optional_auth)):
     body = await request.json()
     question = body.get("question", "").strip()
     if not question:
@@ -92,12 +92,16 @@ async def query(request: Request):
     k = max(1, min(10, int(body.get("k", K))))
     filter_sources = [s for s in body.get("filter_sources", []) if s]
 
+    uid = (auth or {}).get("sub")
+    def _vis(doc):
+        return doc.metadata.get("visibility", "shared") in (("shared", uid) if uid else ("shared",))
+
     if len(filter_sources) == 1:
-        src_filter = {"source": filter_sources[0]}
+        src_filter = lambda doc: _vis(doc) and doc.metadata.get("source") == filter_sources[0]
     elif filter_sources:
-        src_filter = lambda doc: doc.metadata.get("source") in filter_sources
+        src_filter = lambda doc: _vis(doc) and doc.metadata.get("source") in filter_sources
     else:
-        src_filter = None
+        src_filter = _vis
 
     # HyDE: embed a hypothetical answer; re-rank with the original question.
     fetch_k = min(len(state.store._docs), max(k * 4, 20))
@@ -125,12 +129,13 @@ async def query(request: Request):
     return StreamingResponse(generate(), media_type="text/plain")
 
 
-@protected.get("/documents", response_class=HTMLResponse)
-async def list_documents():
-    return HTMLResponse(doc_list_html())
+@app.get("/documents", response_class=HTMLResponse)
+async def list_documents(auth: dict | None = Depends(optional_auth)):
+    authenticated = auth is not None or not AUTH_ENABLED
+    return HTMLResponse(doc_list_html(authenticated=authenticated))
 
 
-@protected.get("/sources/{source_name}/context")
+@app.get("/sources/{source_name}/context")
 async def source_context(source_name: str, chunk_index: int = Query(0), window: int = Query(500)):
     full_text = state.sources.get(source_name, "")
     chunk_text = next(

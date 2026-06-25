@@ -38,10 +38,8 @@
 <body>
 <main class="container">
   {% if clerk_pk %}
-  <div id="auth-gate" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:9999;align-items:center;justify-content:center">
-    <div style="background:var(--pico-background-color);padding:2rem;border-radius:var(--pico-border-radius);max-width:420px;width:90%">
-      <div id="clerk-sign-in"></div>
-    </div>
+  <div id="anon-banner" style="display:none;background:var(--pico-card-background-color);border:1px solid var(--pico-muted-border-color);border-radius:var(--pico-border-radius);padding:0.6rem 1rem;margin-bottom:1rem;font-size:0.85rem">
+    <span>Querying shared knowledge base — <a href="#" onclick="signIn();return false">Sign in</a> to add your own documents.</span>
   </div>
   {% endif %}
 
@@ -53,7 +51,7 @@
     {% if clerk_pk %}
     <button id="sign-out-btn" class="secondary outline"
             style="display:none;padding:0.3rem 0.9rem;font-size:0.85rem;white-space:nowrap"
-            onclick="Clerk.signOut()">Sign out</button>
+            onclick="window.Clerk.signOut()">Sign out</button>
     {% endif %}
   </hgroup>
 
@@ -67,6 +65,7 @@
         <small>Loading…</small>
       </div>
 
+      <div id="mgmt-section"{% if clerk_pk %} style="display:none"{% endif %}>
       <hr>
 
       <details>
@@ -147,6 +146,7 @@
       <div id="save-status" style="margin-top:0.4rem;min-height:1.2rem"></div>
 
       </details><!-- /Manage corpus -->
+      </div><!-- /mgmt-section -->
     </aside>
 
     <!-- Right: query + streaming answer -->
@@ -199,18 +199,23 @@
 // ---- Clerk auth ----
 let _clerkToken = null;
 
+function signIn() {
+  window.Clerk.openSignIn({ afterSignInUrl: window.location.href, afterSignUpUrl: window.location.href });
+}
+
 async function _initClerk() {
   if (!window.Clerk) return;
   await window.Clerk.load();
   if (!window.Clerk.user) {
-    const gate = document.getElementById('auth-gate');
-    gate.style.display = 'flex';
-    window.Clerk.mountSignIn(document.getElementById('clerk-sign-in'));
+    document.getElementById('anon-banner').style.display = 'block';
     return;
   }
   _clerkToken = await window.Clerk.session.getToken();
   document.getElementById('sign-out-btn').style.display = 'inline-block';
+  document.getElementById('mgmt-section').style.display = 'block';
   setInterval(async () => { _clerkToken = await window.Clerk.session.getToken(); }, 55_000);
+  // Refresh doc list now that we have auth — shows delete buttons
+  htmx.ajax('GET', '/documents', { target: '#doc-list', swap: 'outerHTML' });
 }
 
 document.addEventListener('htmx:configRequest', function(e) {

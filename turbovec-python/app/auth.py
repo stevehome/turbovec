@@ -59,3 +59,16 @@ async def require_auth(request: Request) -> dict:
         return _verify(auth.removeprefix("Bearer "))
     except Exception:
         raise HTTPException(401, "Invalid or expired token")
+
+
+async def optional_auth(request: Request) -> dict | None:
+    """Returns the JWT payload when authenticated, None when anonymous. Never raises 401."""
+    if not ENABLED:
+        return {}
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        return None
+    try:
+        return _verify(auth.removeprefix("Bearer "))
+    except Exception:
+        return None
