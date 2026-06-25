@@ -47,6 +47,11 @@ jobs:
 
       - name: Trigger App Runner redeployment
         run: |
-          aws apprunner start-deployment \
-            --service-arn $SERVICE_ARN \
-            --region $AWS_REGION
+          STATUS=$(aws apprunner describe-service \
+            --service-arn $SERVICE_ARN --region $AWS_REGION \
+            --query 'Service.Status' --output text 2>/dev/null || echo "MISSING")
+          if [ "$STATUS" = "RUNNING" ]; then
+            aws apprunner start-deployment --service-arn $SERVICE_ARN --region $AWS_REGION
+          else
+            echo "Service status: $STATUS — skipping start-deployment (trigger manually once service is RUNNING)"
+          fi
