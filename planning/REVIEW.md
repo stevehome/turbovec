@@ -145,6 +145,74 @@ For a demo being shared with a small number of people: **Option 2 (Clerk)**. It'
 
 ---
 
+## Anonymous read / signed-in write
+
+### Concept
+
+Let anyone query the shared corpus without signing in — the app is immediately useful as a demo. Signing in unlocks document management (upload, add text, delete) and access to your own private documents.
+
+### Access tiers
+
+| Action | Anonymous | Signed in |
+|--------|-----------|-----------|
+| Query against shared docs | ✓ | ✓ |
+| Query against own private docs | — | ✓ |
+| View shared document list | ✓ (read-only) | ✓ |
+| Upload / add text | — | ✓ (private by default) |
+| Delete own documents | — | ✓ |
+| Re-index corpus.txt / chunk settings | — | admin only |
+| Clear index | — | admin only |
+
+### Backend changes
+
+`require_auth` becomes optional — returns `None` for unauthenticated requests instead of raising 401. A separate `require_auth_strict` raises 401 for endpoints that truly need a user.
+
+```python
+async def optional_auth(request: Request) -> dict | None:
+    if not ENABLED:
+        return None
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        return None   # anonymous — not an error
+    try:
+        return _verify(auth.removeprefix("Bearer "))
+    except Exception:
+        raise HTTPException(401, "Invalid token")
+```
+
+**`/query`** uses `optional_auth`. The filter changes based on who's asking:
+```python
+uid = (auth or {}).get("sub")          # None for anonymous
+if uid:
+    src_filter = lambda doc: doc.metadata.get("visibility") in ("shared", uid)
+else:
+    src_filter = lambda doc: doc.metadata.get("visibility") == "shared"
+```
+
+**Write endpoints** (`/upload`, `/documents` POST, `/reindex`, `/rechunk`, `/rebuild`, `/clear`, `/save`, `/delete`) use `require_auth_strict` — 401 for anonymous.
+
+### Frontend changes
+
+Replace the full-page sign-in overlay with a non-blocking approach:
+
+- The query panel is always visible and functional for anonymous users.
+- A subtle banner at the top: `"Querying shared knowledge base — Sign in to add your own documents"` with a sign-in link. The banner disappears after sign-in.
+- The corpus management panel (left column) shows shared docs to everyone. The "Manage corpus" details section is replaced with `"Sign in to upload or add documents"` for anonymous users.
+- HTMX management buttons (upload, add text, delete) are hidden for anonymous users via a Jinja2 `{% if not anon %}` flag passed from the server, not just JavaScript — so they're never in the DOM at all for anonymous sessions.
+
+### UX flow
+
+1. User lands on the page → sees the shared corpus, can type a question and get an answer immediately.
+2. They want to upload their own PDF → click "Sign in" → Clerk sign-in modal appears (not full-page, just the modal component).
+3. After sign-in, the banner disappears, the corpus management panel unlocks, and their private documents appear in the doc list.
+4. Their private documents are only searched when they are signed in.
+
+### Why this is better than the current full-page gate
+
+The current approach blocks all access until sign-in. That makes the app useless as a shareable demo — anyone you send the URL to hits a login wall before seeing anything. The anonymous-read model lets the shared corpus act as a live demo that sells the product before asking for a commitment.
+
+---
+
 ## Multi-user data model — private and shared documents
 
 ### Current state
