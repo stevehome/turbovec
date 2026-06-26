@@ -46,4 +46,8 @@ jobs:
           docker push $ECR_REPO:latest
 
       - name: Trigger App Runner redeployment
-        run: aws apprunner start-deployment --service-arn $SERVICE_ARN --region $AWS_REGION
+        run: |
+          until [ "$(aws apprunner describe-service --service-arn $SERVICE_ARN --region $AWS_REGION --query 'Service.Status' --output text)" = "RUNNING" ]; do
+            echo "Waiting for service to reach RUNNING state..."; sleep 15
+          done
+          aws apprunner start-deployment --service-arn $SERVICE_ARN --region $AWS_REGION
