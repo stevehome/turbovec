@@ -20,7 +20,7 @@ from pathlib import Path
 import numpy as np
 
 import uvicorn
-from fastapi import APIRouter, Depends, FastAPI, Form, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, FastAPI, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from langchain_core.messages import HumanMessage
@@ -164,22 +164,32 @@ async def source_context(source_name: str, chunk_index: int = Query(0), window: 
 
 
 @protected.delete("/documents/{doc_id}", response_class=HTMLResponse)
-async def delete_document(doc_id: str):
+async def delete_document(doc_id: str, auth: dict = Depends(require_auth)):
+    uid = auth.get("sub", "shared")
     if doc_id in state.store._docs:
+        _, meta = state.store._docs[doc_id]
+        vis = meta.get("visibility", "shared")
+        if vis != "shared" and vis != uid:
+            raise HTTPException(403, "Not your document")
         state.store.delete([doc_id])
         state.store.dump(INDEX_PATH)
-    return HTMLResponse(doc_list_html())
+    return HTMLResponse(doc_list_html(authenticated=True, user_id=uid))
 
 
 @protected.delete("/sources/{source_name}", response_class=HTMLResponse)
-async def delete_source(source_name: str):
-    ids = [sid for sid, (_, meta) in state.store._docs.items() if meta.get("source") == source_name]
+async def delete_source(source_name: str, auth: dict = Depends(require_auth)):
+    uid = auth.get("sub", "shared")
+    ids = [
+        sid for sid, (_, meta) in state.store._docs.items()
+        if meta.get("source") == source_name
+        and (meta.get("visibility", "shared") in ("shared", uid))
+    ]
     if ids:
         state.store.delete(ids)
         state.sources.pop(source_name, None)
         delete_source_file(source_name)
         state.store.dump(INDEX_PATH)
-    return HTMLResponse(doc_list_html())
+    return HTMLResponse(doc_list_html(authenticated=True, user_id=uid))
 
 
 @protected.post("/documents", response_class=HTMLResponse)
