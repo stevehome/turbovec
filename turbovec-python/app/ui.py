@@ -27,8 +27,12 @@ def memory_stats() -> str:
     return f'{vec_line} · Process: {proc_mb:.0f} MB'
 
 
-def source_filter_html() -> str:
-    sources = sorted({meta.get("source", "?") for _, (_, meta) in state.store._docs.items()})
+def source_filter_html(user_id: str | None = None) -> str:
+    sources = sorted({
+        meta.get("source", "?")
+        for _, (_, meta) in state.store._docs.items()
+        if meta.get("visibility", "shared") in ("shared", user_id)
+    })
     options = "".join(
         f'<option value="{html.escape(s, quote=True)}">{html.escape(s)}</option>'
         for s in sources
@@ -94,5 +98,5 @@ def doc_list_html(authenticated: bool = True, user_id: str | None = None) -> str
         f'{memory_stats()} · chunk_size={state.chunk_size} overlap={state.chunk_overlap}'
         f'{" · contextual=on" if state.contextual else ""}</p>'
         f'</div>'
-        f'{source_filter_html()}'
+        f'{source_filter_html(user_id=user_id)}'
     )
