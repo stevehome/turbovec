@@ -46,3 +46,7 @@ Cross-encoder re-ranking scores each retrieved chunk against the original questi
 The web interface is built with FastAPI and HTMX. Answers stream token by token directly from Claude into the browser without a page reload.
 You can upload PDF and plain text files. Scanned PDFs without selectable text are processed with Claude's vision capabilities to extract the text via OCR.
 The app runs on AWS App Runner and stores the vector index to disk so documents persist across restarts. When run locally on a MacBook, no data leaves your machine.
+Anyone can use the app without signing in. Without an account you can ask questions and get answers from the shared knowledge base, which includes the built-in corpus and any documents that have been marked as shared.
+To sign in, click the "Sign in" link in the banner at the top of the page. You can create a free account using your email address. Signing in is required to upload your own documents.
+When signed in, any document you upload or text you add is private to your account by default. Private documents are not visible to other users and are not included in their search results. Only you can see, query, and delete your own private documents.
+Shared documents, such as those in the built-in corpus, are visible and searchable by everyone including users who are not signed in. The source filter dropdown and document list only show documents you are allowed to see.
