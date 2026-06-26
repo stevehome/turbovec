@@ -252,9 +252,11 @@ async def rechunk(chunk_size: int = Form(500), chunk_overlap: int = Form(50), co
 
     for source, text in list(state.sources.items()):
         old_ids = [sid for sid, (_, meta) in state.store._docs.items() if meta.get("source") == source]
+        vis = "shared"
         if old_ids:
+            vis = state.store._docs[old_ids[0]][1].get("visibility", "shared")
             state.store.delete(old_ids)
-        chunks, metas = chunk_with_meta(text, source)
+        chunks, metas = chunk_with_meta(text, source, visibility=vis)
         if chunks:
             if state.contextual:
                 chunks = await enrich_chunks(chunks, text)
