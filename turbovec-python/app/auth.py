@@ -18,7 +18,10 @@ _JWKS_TTL = 3600.0
 
 def frontend_api() -> str:
     pk = os.environ.get("CLERK_PUBLISHABLE_KEY", "")
-    b64 = pk.split("_", 2)[2].rstrip("$")
+    parts = pk.split("_", 2)
+    if len(parts) < 3:
+        return ""
+    b64 = parts[2].rstrip("$")
     b64 += "=" * (-len(b64) % 4)
     return base64.b64decode(b64).decode().rstrip("$")
 
