@@ -607,6 +607,37 @@ If billing can't be fixed quickly, use option 2 (local model download + COPY) to
 
 ---
 
+## Image ingestion — photos of text and handwriting
+
+The app already handles scanned PDFs via Claude OCR. A natural extension is accepting image uploads directly — photos of handwritten notes, whiteboard shots, printed pages, receipts, or any document where the content lives in pixels rather than a file format.
+
+### What this would look like
+
+- Accept `.jpg`, `.png`, `.webp` (and possibly `.heic` for iPhone photos) alongside the existing `.pdf` and `.txt` upload paths.
+- Pass each image to Claude's vision API with a prompt asking it to transcribe the text faithfully, preserving structure (headings, lists, tables) where possible.
+- Feed the extracted text into the existing chunking and contextual enrichment pipeline — so handwritten notes get the same treatment as any other document.
+
+### Why it's interesting
+
+- **Handwriting** is the hardest case for traditional OCR (Tesseract etc.) but well within Claude's vision capabilities, especially for English cursive or printed notes.
+- **Whiteboards and photos** are a common real-world source of unstructured knowledge that currently can't be indexed anywhere without manual transcription.
+- **No new infrastructure** — the Claude vision call is the same pattern as the scanned PDF fallback already in `ingest.py`. The upload endpoint just needs to accept image MIME types and route them through the same OCR path.
+
+### Implementation sketch
+
+1. In the upload handler, detect image MIME types (`image/jpeg`, `image/png`, `image/webp`).
+2. Base64-encode the image and pass it to Claude as a `image` content block alongside a transcription prompt — same approach as the existing PDF OCR fallback.
+3. Cache the extracted text alongside the source file (same OCR cache used for scanned PDFs) so re-indexing doesn't re-call Claude.
+4. Surface the transcribed text in the source viewer so users can verify what was extracted.
+
+### Caveats
+
+- Claude's vision context window limits image resolution — very large images may need tiling or downscaling.
+- Handwriting quality varies; a confidence warning (similar to the low-score retrieval warning) would help set expectations.
+- Multi-page image sequences (e.g. a photo per page of a notebook) would need a zip upload or multi-file selection, which is a UI change.
+
+---
+
 ## Previous review (Phase 1 → Phase 2 transition)
 
 See `plan/REVIEW.md` for the earlier review written before the FastAPI + HTMX app was
